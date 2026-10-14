@@ -1,0 +1,211 @@
+/* =========================================================
+   ws-client.js — 통합 서버 WebSocket 클라이언트 (통합자 추가분)
+   기존 user-face.js / guardian.js 의 함수(setState, setEmotion, addEventRow …)를
+   그대로 호출해서 화면을 바꾼다. UI 코드는 손대지 않는다.
+
+   규약: TEAM_INTEGRATION_GUIDE.md 3절 + server/core/broker.py 주석
+   - 로봇 페이지   : state 메시지 수신 → setState/setEmotion/카운트다운, speak=true 면 브라우저 TTS 재생 후 tts_done 회신
+   - 보호자 페이지 : alert_created / alert_resolved / device_status / robot_state / notice
+   - 서버 없이 html 만 열면(file://) 아무것도 하지 않고 기존 데모 동작 유지
+========================================================= */
+(function(){
+  if(location.protocol === "file:") return;
+  const isRobot = !!document.getElementById("face");
+  const isGuardian = !!document.getElementById("emergencyOverlay");
+  if(!isRobot && !isGuardian) return;
+  const role = isRobot ? "robot" : "guardian";
+  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/" + role;
+
+  let ws = null, retry = 1000;
+  function send(obj){ if(ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+  function connect(){
+    ws = new WebSocket(url);
+    ws.onopen = () => { retry = 1000; send({type:"hello", role, info:{ua:navigator.userAgent}}); onConn(true); };
+    ws.onclose = () => { onConn(false); setTimeout(connect, retry); retry = Math.min(retry*2, 10000); };
+    ws.onerror = () => ws.close();
+    ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch{ return; } (isRobot ? onRobot : onGuardian)(m); };
+  }
+  function onConn(ok){
+    if(isGuardian){
+      const b = document.getElementById("connBadge");
+      if(b){ b.textContent = ok ? "실시간 연결됨" : "서버 연결 끊김"; b.className = "badge dot " + (ok ? "ok" : "danger"); }
+    }
+    if(isRobot && typeof log === "function") log(ok ? "서버 연결됨" : "서버 연결 끊김 (재시도 중)");
+  }
+  window.DaonWS = { send };
+
+  /* ============================ 로봇 얼굴 ============================ */
+  const UI_EMOTION = { neutral:"neutral", happy:"happy", sad:"sad", angry:"angry", surprised:"neutral", fear:"sad" };
+  let curState = null, curText = null, curEmotion = null, cdTimer = null;
+
+  function showCountdown(sec){
+    if(typeof clearAlertTimer === "function") clearAlertTimer();   // user-face.js 의 자체 10초 타이머는 끈다 (서버가 기준)
+    if(cdTimer){ clearInterval(cdTimer); cdTimer = null; }
+    const ring = document.getElementById("countdownRing");
+    if(!ring) return;
+    if(sec === null || sec === undefined){ ring.classList.add("hidden"); return; }
+    let remain = Math.round(sec);
+    ring.classList.remove("hidden");
+    ring.textContent = remain > 0 ? remain : "!";
+    if(remain <= 0) return;
+    cdTimer = setInterval(() => {
+      remain -= 1;
+      ring.textContent = remain > 0 ? remain : "!";
+      if(remain <= 0){ clearInterval(cdTimer); cdTimer = null; }
+    }, 1000);
+  }
+
+  function speak(text, utteranceId){
+    const done = (ok) => send({type:"tts_done", utterance_id: utteranceId, ok});
+    if(!("speechSynthesis" in window)){ setTimeout(() => done(false), Math.max(1500, text.length*120)); return; }
+    try{
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "ko-KR"; u.rate = 0.95;
+      const ko = speechSynthesis.getVoices().find(v => (v.lang||"").toLowerCase().startsWith("ko"));
+      if(ko) u.voice = ko;
+      let finished = false;
+      const finish = (ok) => { if(finished) return; finished = true; done(ok); };
+      u.onend = () => finish(true);
+      u.onerror = () => finish(false);
+      setTimeout(() => finish(false), Math.max(4000, text.length*250));   // onend 가 안 오는 브라우저 대비
+      speechSynthesis.speak(u);
+    }catch(e){ done(false); }
+  }
+
+  function onRobot(m){
+    if(m.type !== "state") return;
+    const emo = UI_EMOTION[m.emotion] || "neutral";
+    if(emo !== curEmotion && typeof setEmotion === "function"){ curEmotion = emo; setEmotion(emo); }
+    const text = m.text || "";
+    if(m.state !== curState || (text && text !== curText)){
+      curState = m.state; curText = text;
+      if(typeof setState === "function") setState(m.state, text ? {text} : {});
+      if(m.state === "speaking" || m.state === "alert" || m.state === "recover"){
+        if(typeof setContext === "function" && m.state === "speaking") setContext("robotTalking");
+      }
+    }
+    if(m.state === "alert") showCountdown(m.countdown); else showCountdown(null);
+    if(m.speak && text) speak(text, m.utterance_id);
+  }
+
+  /* ============================ 보호자 대시보드 ============================ */
+  const EMO_KO = { neutral:"중립 😐", happy:"기쁨 😊", sad:"슬픔 😢", angry:"화남 😠", surprised:"놀람 😮" };
+  const RES_KO = { elder_ok:"어르신 응답 (오탐 해제)", false_alarm:"오탐 처리", guardian_confirmed:"확인 완료",
+                   called_119:"119 연결", timeout:"시간 초과" };
+  const DEV_KO = { ok:"정상", mock:"모의", off:"미연결", error:"오류", stale:"끊김", starting:"시작 중" };
+  let activeAlertId = null;
+  const t = (ts) => new Date((ts||Date.now()/1000)*1000).toLocaleTimeString("ko-KR",{hour12:false});
+
+  function badge(el, status){
+    if(!el) return;
+    el.textContent = DEV_KO[status] || status;
+    el.className = "badge dot " + (status === "ok" || status === "mock" ? "ok" : status === "off" ? "" : "warn");
+  }
+
+  function onGuardian(m){
+    switch(m.type){
+      case "alert_created": {
+        activeAlertId = m.alert_id;
+        const s = m.sensors || {};
+        const emg = document.getElementById("emgSensors");
+        if(emg) emg.textContent = `판정 근거: pose(${s.pose}) · audio(${s.audio}) · radar(${s.radar}) · 융합 ${m.fused ? m.fused.pred+" "+Math.round((m.fused.conf||0)*100)+"%" : ""}`;
+        const tm = document.getElementById("emgTime");
+        if(tm) tm.textContent = "발생 시각: " + t(m.ts) + (m.status && m.status !== "raised" ? ` (${m.status})` : "");
+        document.getElementById("emergencyOverlay").classList.remove("hidden");
+        const sb = document.getElementById("statusBadge");
+        if(sb){ sb.textContent = "주의"; sb.className = "badge dot danger"; }
+        const sil = document.getElementById("silhouette"); if(sil) sil.textContent = "⚠️";
+        if(typeof addEventRow === "function")
+          addEventRow({ time:t(m.ts), type: m.status === "realert" ? "재알림" : "낙상 의심", sensors:`pose:${s.pose} audio:${s.audio} radar:${s.radar}`, status:"대기 중" });
+        if(typeof toast === "function") toast("🚨 " + (m.title || "긴급 알림"));
+        break;
+      }
+      case "alert_resolved": {
+        document.getElementById("emergencyOverlay").classList.add("hidden");
+        const sb = document.getElementById("statusBadge");
+        if(sb){ sb.textContent = "안정"; sb.className = "badge dot ok"; }
+        const sil = document.getElementById("silhouette"); if(sil) sil.textContent = "🧍";
+        if(typeof addEventRow === "function")
+          addEventRow({ time:t(m.ts), type:"낙상 의심", status:"처리됨", result: RES_KO[m.resolution] || m.resolution, handler: m.handled_by || "-" });
+        activeAlertId = null;
+        break;
+      }
+      case "device_status": {
+        const rows = document.querySelectorAll("#tab-home table tr");
+        // 행 순서: 로봇 폰 / 레이더 / 카메라 / 마이크 / Wi-Fi  (guardian-dashboard.html)
+        const map = [["robot", m.robot_online ? "ok" : "off"], ["radar", m.radar], ["camera", m.camera], ["mic", m.mic], ["wifi", m.wifi]];
+        map.forEach(([k, st], i) => { const r = rows[i]; if(r){ badge(r.querySelector(".badge"), st === "unknown" ? "off" : st); } });
+        if(rows[0] && m.battery != null){ const c = rows[0].querySelectorAll("td")[2]; if(c) c.textContent = "배터리 " + m.battery + "%"; }
+        const warn = [m.radar, m.camera, m.mic].some(s => s === "error" || s === "stale");
+        const banner = document.getElementById("connWarnBanner"); if(banner) banner.classList.toggle("hidden", !warn);
+        break;
+      }
+      case "robot_state": {
+        const he = document.getElementById("homeEmotion"); if(he) he.textContent = EMO_KO[m.emotion] || m.emotion;
+        const hu = document.getElementById("homeUpdated"); if(hu) hu.textContent = t() + " · " + (m.state||"");
+        break;
+      }
+      case "notice": {
+        if(typeof toast === "function") toast("💬 " + (m.title || "안부 알림") + ": " + (m.body||"").split("\n")[0]);
+        if(typeof addEventRow === "function") addEventRow({ time:t(m.ts), type:"정서 알림", result:(m.body||"").split("\n")[0] });
+        break;
+      }
+    }
+  }
+
+  if(isGuardian){
+    // guardian.js 의 버튼 핸들러를 감싸서 서버로도 보낸다 (함수 선언은 전역이라 재할당 가능)
+    const origResolve = window.resolveAlert, origSend = window.sendMsgToRobot;
+    window.resolveAlert = function(resolution){
+      send({type:"alert_resolve", alert_id: activeAlertId, resolution, handled_by:"guardian_1"});
+      if(origResolve) origResolve(resolution);
+    };
+    window.sendMsgToRobot = function(){
+      const input = document.getElementById("msgInput");
+      const msg = input ? input.value.trim() : "";
+      if(msg) send({type:"message_to_robot", text: msg});
+      if(origSend) origSend();
+    };
+    const btn119 = document.getElementById("btnCall119");
+    if(btn119) btn119.addEventListener("click", () => send({type:"alert_resolve", alert_id: activeAlertId, resolution:"called_119", handled_by:"guardian_1"}));
+
+    // 분석 탭: 서버 평가 로그(jsonl)로 타임라인·정확도 그래프를 그린다 (실패하면 기존 목업)
+    const origInit = window.initAnalysisCharts;
+    window.initAnalysisCharts = async function(){
+      try{
+        const [log, summary] = await Promise.all([
+          fetch("/api/eval_log?limit=600").then(r => r.json()),
+          fetch("/api/eval_summary").then(r => r.json()),
+        ]);
+        if(!Array.isArray(log) || log.length < 2) throw new Error("no log");
+        const t0 = log[0].ts, total = Math.max(1, log[log.length-1].ts - t0);
+        const seg = (key) => {
+          const out = []; let cur = null;
+          log.forEach(l => {
+            const p = (l[key] && l[key].pred) || "no_fall"; const ts = l.ts - t0;
+            if(!cur || cur.pred !== p){ if(cur) cur.end = ts; cur = {start: ts, end: ts, pred: p === "uncertain" ? "no_fall" : p}; out.push(cur); }
+            cur.end = ts;
+          });
+          if(cur) cur.end = total;
+          return out;
+        };
+        renderTimeline("timelineChart", [
+          { label:"pose", segments: seg("pose") }, { label:"audio", segments: seg("audio") },
+          { label:"radar", segments: seg("radar") }, { label:"융합", segments: seg("fused") },
+        ], total);
+        const cam = summary && summary.camera;
+        if(cam && cam.f1 != null){
+          renderAccuracyBars("barChart", [{ name:"카메라 단독 (UR Fall)", Recall:cam.recall, Precision:cam.precision, F1:cam.f1 }]);
+          const c = cam.confusion || {};
+          renderConfMatrix("confMatrix", { tp:c.TP||0, fn:c.FN||0, fp:c.FP||0, tn:c.TN||0 });
+        }
+        analysisInited = true;
+      }catch(e){
+        if(origInit) origInit();
+      }
+    };
+  }
+
+  connect();
+})();

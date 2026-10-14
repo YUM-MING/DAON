@@ -1,0 +1,35 @@
+# DAON 통합 서버 설정
+# 실행: ./run.sh            (이 파일 사용)
+#       ./run.sh --mock     (센서 모듈 없이 가짜 이벤트로 UI/대화 테스트)
+
+server:
+  host: 0.0.0.0       # 스마트폰이 같은 Wi-Fi에서 접속할 수 있게 전체 바인딩
+  port: 8000
+
+modules:
+  vision:
+    mode: worker       # worker(실제 카메라, 별도 프로세스) | mock | off
+    camera: 0          # 카메라 인덱스 또는 영상 파일 경로
+    fps: 15            # 처리 프레임 상한 (CPU 부하 조절)
+  audio:
+    mode: worker       # worker | mock | off
+    input_device: null # sounddevice 장치 번호. null=시스템 기본 마이크
+    stt_model: base    # tiny / base / small
+    stt: true
+  radar:
+    mode: off          # worker | mock | off  — LD2410B 연결 후 worker로
+    port: /dev/tty.usbserial-0001   # macOS: /dev/tty.usbserial-* , Windows: COM3
+    baud: 256000
+  dialogue:
+    mode: real         # real | off
+
+robot:
+  sleep_after_absent_sec: 30   # 사람이 안 보인 지 이 시간이 지나면 sleep
+  tts_timeout_sec: 12          # 폰에서 tts_done이 안 오면 이 시간 후 말하기 종료로 간주
+  wake_to_listen_sec: 2
+
+logs:
+  dir: logs
+  eval_log: eval_log.jsonl     # 분석 탭 규약 (한 줄 JSON)
+  alerts: alerts.jsonl         # 보호자 알림 발송 기록 (혜원 모듈 FileNotifier)
+  scenario_id: live

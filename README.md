@@ -13,7 +13,9 @@ DAON/
 │   ├── audio_ai/    # 음성 (한정연) — 환경음 분류 + STT
 │   └── dialogue/    # 대화·융합·알림 (채혜원)
 ├── web/             # 웹앱 (김유진) — 로봇 얼굴 + 보호자 대시보드
-├── server/          # 통합 서버 (FastAPI + WebSocket 브로커) — 작업 예정
+├── server/          # 통합 서버 (FastAPI + WebSocket 브로커 + 모듈 어댑터/워커 + mock)
+├── config.yaml      # 카메라/마이크/레이더 포트, 모듈 on/off
+├── run.sh           # 한 번에 기동
 └── TEAM_INTEGRATION_GUIDE.md
 ```
 
@@ -27,6 +29,17 @@ DAON/
 - 모듈과 서버 사이 연결은 `server/adapters/` 의 어댑터 한 파일이 담당한다.
   모듈 출력 형식이 바뀌면 해당 어댑터만 고치면 된다.
 - 규약(메시지 형식)은 `TEAM_INTEGRATION_GUIDE.md` 3절이 기준. 바꿀 일이 있으면 팀 합의 후 통합자가 수정한다.
+
+## 통합 서버 실행
+
+```bash
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+./run.sh --mock     # 센서 없이 가짜 이벤트 + 실물 대화 모듈 → http://localhost:8000/
+./run.sh            # config.yaml 대로 실제 카메라/마이크 워커 기동
+python -m pytest server/tests -q   # 시나리오 테스트
+```
+진행 상황·모듈별 수정 요청·확인 목록은 [INTEGRATION_STATUS.md](INTEGRATION_STATUS.md).
 
 ## 모듈 단독 실행
 

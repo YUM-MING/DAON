@@ -15,8 +15,9 @@ WORKERS = ROOT / "server" / "workers"
 DEFAULTS: dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8000, "secure_cookie": False},
     "modules": {
-        "vision": {"mode": "worker", "source": "phone", "fps": 10},
-        "audio": {"mode": "worker", "source": "phone", "input_device": None, "stt_model": "base", "stt": True},
+        "vision": {"mode": "worker", "source": "phone", "fps": 10, "debug": True},
+        "audio": {"mode": "worker", "source": "phone", "input_device": None, "stt_model": "base", "stt": True,
+                  "debug": True, "record": True},
         "radar": {"mode": "off", "port": "", "baud": 256000, "home_code": None},
         "dialogue": {"mode": "real"},
     },

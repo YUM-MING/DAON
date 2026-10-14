@@ -15,8 +15,10 @@ from server.config import MODULES, WORKERS
 class VisionAdapter(WorkerAdapter):
     def __init__(self, bus_for, config: dict) -> None:
         m = config["modules"]["vision"]
-        super().__init__(bus_for, "vision", WORKERS / "vision_worker.py", MODULES / "vision",
-                         ["--source", str(m.get("source", "phone")), "--fps", str(m["fps"])])
+        args = ["--source", str(m.get("source", "phone")), "--fps", str(m["fps"]), "--log-dir", config["logs"]["dir"]]
+        if m.get("debug", True):
+            args.append("--debug")
+        super().__init__(bus_for, "vision", WORKERS / "vision_worker.py", MODULES / "vision", args)
 
     def attach_home(self, rt) -> None:
         hid = rt.id

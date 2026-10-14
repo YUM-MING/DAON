@@ -39,6 +39,8 @@ class Coordinator:
         bus = ctx.bus
         # 로봇 얼굴 상태
         self.ui_state, self.emotion, self.text, self.countdown = "sleep", "neutral", "", None
+        self.emotion_raw, self.emotion_conf = None, None
+        self._last_debug_pose = 0.0
         self.speaking, self.utterance_id, self._speak_deadline = False, 0, None
         self._thinking_until = self._recover_until = self._wake_until = None
         self._absent_since: float | None = None
@@ -70,6 +72,10 @@ class Coordinator:
             "device": self.on_device, "client": self.on_client,
         }.items():
             bus.subscribe(t, fn)
+        # 실시간 센서 로그 (보호자 대시보드 '실시간 센서 로그' 카드): 워커/모듈 디버그 이벤트를 그대로 중계
+        for t in ("vision_debug", "emotion_debug", "audio_debug", "audio_fall", "speech", "voice_unclear",
+                  "fall_detected", "radar", "dialogue_output"):
+            bus.subscribe(t, self._relay_debug)
 
     def _initial_dev(self, module: str) -> str:
         m = self.ctx.mode(module)
@@ -93,6 +99,7 @@ class Coordinator:
     # ---------------- 로봇 얼굴 ----------------
     def _push_state(self, speak: bool = False) -> None:
         msg = {"type": "state", "state": self.ui_state, "emotion": self.emotion,
+               "emotion_raw": self.emotion_raw, "emotion_conf": self.emotion_conf,
                "text": self.text, "countdown": self.countdown}
         if speak:
             self.utterance_id += 1
@@ -154,6 +161,7 @@ class Coordinator:
 
     def on_emotion(self, ev) -> None:
         label = ev.label
+        self.emotion_raw, self.emotion_conf = ev.get("raw"), ev.get("confidence")
         if label != self.emotion:
             self.emotion = label
             self._push_state()
@@ -269,6 +277,18 @@ class Coordinator:
     def on_guardian_message(self, ev) -> None:
         state = "alert" if self.ui_state == "alert" else "speaking"
         self._speak(state, ev.text, self.countdown if state == "alert" else None)
+
+    def _relay_debug(self, ev) -> None:
+        kind = {"vision_debug": "vision", "emotion_debug": "emotion", "audio_debug": "audio",
+                "dialogue_output": "dialogue"}.get(ev.type, ev.type)
+        if ev.type == "dialogue_output":
+            if not ev.get("response_text") and ev.get("strategy") == "NONE":
+                return
+            data = {"strategy": ev.get("strategy"), "text": ev.get("response_text"), "reason": ev.get("reason"),
+                    "state": ev.get("state")}
+        else:
+            data = {k: v for k, v in ev.data.items() if k not in ("probs",)}
+        self.broker.send_guardian({"type": "debug", "kind": kind, "ts": ev.ts, **data})
 
     # ---------------- 주기 작업 ----------------
     def tick(self) -> None:

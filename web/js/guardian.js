@@ -140,8 +140,8 @@ function sendMsgToRobot(){
   closeMsgModal();
 }
 
-/* ---------- 기기 연결 상태 데모: 가끔 레이더 끊김 시뮬레이션 ---------- */
-setTimeout(()=>{
+/* ---------- 기기 연결 상태 데모: 가끔 레이더 끊김 시뮬레이션 (서버 연결 시에는 실제 device_status 사용) ---------- */
+if(location.protocol === "file:") setTimeout(()=>{
   document.getElementById("devRadar").textContent = "끊김";
   document.getElementById("devRadar").className = "badge warn dot";
   document.getElementById("connWarnBanner").classList.remove("hidden");

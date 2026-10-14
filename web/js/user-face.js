@@ -115,6 +115,8 @@ function setContext(context){
 
 let alertTimer = null;
 let alertRemaining = 10;
+/* 통합 서버에 붙어 있는지 (ws-client.js / robot-sensors.js 가 동작하는 조건). file:// 로 열면 기존 데모 동작 */
+const SERVER_MODE = location.protocol !== "file:" && !!localStorage.getItem("daon_robot_token");
 
 function log(msg){
   const el = document.createElement("div");
@@ -147,7 +149,9 @@ function setState(state, opts={}){
   applyEye(STATE_DEFAULT_EYE[state] || "default");
 
   if(state === "alert"){
-    startAlertCountdown();
+    // 서버가 countdown 초를 주면 그 값으로, null 이면 카운트다운 없이(비상 유지 중), 없으면 기본 10초
+    if(opts.countdown === null) countdownRing.classList.add("hidden");
+    else startAlertCountdown(opts.countdown ?? 10);
   }
 }
 
@@ -183,14 +187,17 @@ function resetEyeAuto(){
   log("눈 디자인 자동 매핑으로 복귀");
 }
 
-function startAlertCountdown(){
-  alertRemaining = 10;
-  countdownRing.textContent = alertRemaining;
+function startAlertCountdown(sec = 10){
+  clearAlertTimer();
+  alertRemaining = Math.round(sec);
+  countdownRing.textContent = alertRemaining > 0 ? alertRemaining : "!";
+  if(alertRemaining <= 0) return;           // 0 = 이미 보호자 알림 단계
   alertTimer = setInterval(()=>{
     alertRemaining -= 1;
-    countdownRing.textContent = alertRemaining;
+    countdownRing.textContent = alertRemaining > 0 ? alertRemaining : "!";
     if(alertRemaining <= 0){
       clearAlertTimer();
+      if(SERVER_MODE){ log("응답 대기 시간 종료 (판정은 서버가 함)"); return; }
       log("10초 경과 → 긴급 확정, 보호자에게 팝업 전송");
       toast("보호자에게 긴급 알림이 전송되었습니다 (guardian-dashboard.html 확인)");
     }
@@ -250,13 +257,24 @@ function runScenario(type){
 /* ---------- 모서리 제스처(모드 재설정) ---------- */
 mountCornerReset();
 
-/* ---------- 초기 진입 데모: 상태 전환과 함께 상황별 눈 매핑도 함께 시연 ---------- */
+/* ---------- 초기 진입 데모: 상태 전환과 함께 상황별 눈 매핑도 함께 시연 (서버 연결 시에는 생략) ---------- */
 setState("sleep");
 setContext("noUser");                          // 대기 중 → 졸린 눈
-setTimeout(()=> setState("wake"), 2200);
-setTimeout(()=> setContext("idle"), 2200);      // 기상 → 평상시 기본형 눈
-setTimeout(()=> setState("listening"), 4200);
-setTimeout(()=> setContext("userTalking"), 4200); // 어르신이 말하는 중 → 호기심 눈
-setTimeout(()=> setState("thinking"), 6200);
-setTimeout(()=> setState("speaking"), 7600);
-setTimeout(()=> setContext("robotTalking"), 7600); // 로봇이 말하는 중 → 호기심↔반짝임 교차
+if(!SERVER_MODE){
+  setTimeout(()=> setState("wake"), 2200);
+  setTimeout(()=> setContext("idle"), 2200);      // 기상 → 평상시 기본형 눈
+  setTimeout(()=> setState("listening"), 4200);
+  setTimeout(()=> setContext("userTalking"), 4200); // 어르신이 말하는 중 → 호기심 눈
+  setTimeout(()=> setState("thinking"), 6200);
+  setTimeout(()=> setState("speaking"), 7600);
+  setTimeout(()=> setContext("robotTalking"), 7600); // 로봇이 말하는 중 → 호기심↔반짝임 교차
+}
+
+/* ---------- 로봇 연결 해제 (사용자 모드의 '로그아웃') ---------- */
+function unpairRobot(){
+  if(!confirm("이 기기를 집에서 연결 해제할까요? 다시 쓰려면 집 코드를 입력해야 합니다.")) return;
+  localStorage.removeItem("daon_robot_token");
+  localStorage.removeItem("daon_home_name");
+  localStorage.removeItem("sc_mode");
+  location.href = "pair.html";
+}

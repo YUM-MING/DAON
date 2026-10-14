@@ -47,22 +47,57 @@ def forward(home, ev: dict, muted: bool) -> None:
 class HomeAudio:
     """집 하나: 1초 링 버퍼 + 0.5초 hop 으로 AudioRouter.push (AudioSensor._loop 과 같은 규칙)."""
 
-    def __init__(self, home, model, stt, device: str) -> None:
+    def __init__(self, home, model, stt, device: str, debug: bool = False, record_dir: str | None = None) -> None:
         import numpy as np
         from config import N_SAMPLES, SAMPLE_RATE
         from inference import HOP_SEC, AudioRouter
 
-        self.home, self.np = home, np
+        self.home, self.np, self.sr = home, np, SAMPLE_RATE
         self.hop = int(HOP_SEC * SAMPLE_RATE)
         self.n = N_SAMPLES
         self.ring = np.zeros(N_SAMPLES, dtype="float32")
         self.buf = np.zeros(0, dtype="float32")
         self.filled = 0
         self.muted = False
+        self.debug, self.record_dir = debug, record_dir
         self.router = AudioRouter(model, stt, device, emit_fn=lambda ev: forward(home, ev, self.muted), stt_async=True)
+        if debug:                                   # 윈도우마다 분류 결과를 내보낸다 (정연 모듈 내부 _classify 를 감싸기만 함)
+            orig = self.router._classify
+
+            def wrapped(window):
+                label, conf, prob = orig(window)
+                emit("audio_debug", home=home, label=label, conf=round(float(conf), 2),
+                     p_fall=round(float(prob[1]), 2), muted=self.muted)
+                return label, conf, prob
+            self.router._classify = wrapped
+        self._wav, self._wav_started, self._wav_bytes = None, 0.0, 0
+        self.record_sec = 120                       # wav 파일 하나 길이 (초)
+        self.keep_files = 15                        # 오래된 녹음은 지운다 (약 30분 보관)
+
+    def _record(self, raw: bytes) -> None:
+        """폰에서 온 소리를 그대로 wav 로 남긴다 → 정연 모듈 `python inference.py --file <wav>` 로 재현 가능."""
+        import glob
+        import wave
+        now = time.time()
+        if self._wav is None or now - self._wav_started >= self.record_sec:
+            if self._wav is not None:
+                self._wav.close()
+            os.makedirs(self.record_dir, exist_ok=True)
+            for old in sorted(glob.glob(os.path.join(self.record_dir, "mic_*.wav")))[:-self.keep_files]:
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+            path = os.path.join(self.record_dir, f"mic_{time.strftime('%Y%m%d_%H%M%S')}.wav")
+            self._wav = wave.open(path, "wb")
+            self._wav.setnchannels(1); self._wav.setsampwidth(2); self._wav.setframerate(self.sr)
+            self._wav_started = now
+        self._wav.writeframes(raw)
 
     def push_pcm16(self, raw: bytes) -> None:
         np = self.np
+        if self.record_dir:
+            self._record(raw)
         samples = np.frombuffer(raw, dtype="<i2").astype("float32") / 32768.0
         self.buf = np.concatenate([self.buf, samples])
         while len(self.buf) >= self.hop:
@@ -78,6 +113,8 @@ class HomeAudio:
             self.router.close(timeout=2.0)
         except Exception:
             pass
+        if self._wav is not None:
+            self._wav.close()
 
 
 def main() -> None:
@@ -87,6 +124,8 @@ def main() -> None:
     ap.add_argument("--no-stt", action="store_true")
     ap.add_argument("--input-device", default=None)
     ap.add_argument("--home", type=int, default=None)
+    ap.add_argument("--debug", action="store_true", help="윈도우별 분류 결과(audio_debug) 이벤트")
+    ap.add_argument("--record-dir", default=None, help="폰 마이크 소리를 wav 로 저장할 폴더 (logs/)")
     args = ap.parse_args()
 
     stop = threading.Event()
@@ -145,7 +184,8 @@ def main() -> None:
 
     def home(h) -> HomeAudio:
         if h not in homes:
-            homes[h] = HomeAudio(h, model, stt, device)
+            rec = os.path.join(args.record_dir, f"home_{h}") if args.record_dir else None
+            homes[h] = HomeAudio(h, model, stt, device, debug=args.debug, record_dir=rec)
         return homes[h]
 
     for line in sys.stdin:

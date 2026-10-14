@@ -34,30 +34,67 @@ def emit(type: str, ts: float | None = None, **data) -> None:
 class HomeVision:
     """집 하나의 낙상 상태머신 + 표정 인식기 (포즈 추적기는 밖에서 공유)."""
 
-    def __init__(self, home: int, cfg, tracker) -> None:
+    def __init__(self, home: int, cfg, tracker, debug: bool = False, snap_dir: str | None = None) -> None:
         from src.emotion_recognizer import EmotionRecognizer
         from src.events import EventBus
         from src.fall_detector import FallDetector
 
-        self.home, self.cfg, self.tracker = home, cfg, tracker
+        self.home, self.cfg, self.tracker, self.debug, self.snap_dir = home, cfg, tracker, debug, snap_dir
         bus = EventBus()
-        bus.subscribe(lambda e: emit(e.type, ts=e.timestamp, home=home, **e.data))
+        bus.subscribe(self._on_module_event)
         self.fall = FallDetector(cfg.fall, bus)
         self.emotion = EmotionRecognizer(cfg.emotion, bus)
-        self.last_pred = self.last_status = 0.0
+        self.last_pred = self.last_status = self.last_debug = 0.0
+        self._frame = None
+        self._last_emotion_sent = None
+
+    def _on_module_event(self, e) -> None:
+        emit(e.type, ts=e.timestamp, home=self.home, **e.data)
+        if e.type == "emotion":
+            self._last_emotion_sent = e.data.get("label")
+        if e.type == "fall_detected" and self.debug and self.snap_dir is not None and self._frame is not None:
+            import cv2
+            os.makedirs(self.snap_dir, exist_ok=True)
+            path = os.path.join(self.snap_dir, f"fall_{int(e.timestamp)}.jpg")
+            cv2.imwrite(path, self._frame)        # 낙상으로 본 순간의 프레임 (오탐 분석용)
+            print(f"[vision] 낙상 스냅샷 저장: {path}", file=sys.stderr)
 
     def process(self, frame, now: float) -> None:
+        self._frame = frame
         pose = self.tracker.process(frame)
         posture = self.fall.update(pose, frame.shape[0], now=now)
         pred, conf = self.fall.current_pred(now=now)
-        if pose is not None:
-            self.emotion.process(frame, pose)
+        emo = self.emotion.process(frame, pose) if pose is not None else None
         if now - self.last_pred >= self.cfg.pred_interval_sec:
             emit("pose_pred", ts=now, home=self.home, pred=pred, conf=round(conf, 2), fall_state=self.fall.state.value)
             self.last_pred = now
         if now - self.last_status >= self.cfg.status_interval_sec:
             emit("person_status", ts=now, home=self.home, present=pose is not None, posture=posture)
             self.last_status = now
+        if self.debug:
+            if emo is not None:
+                box = pose.face_bbox(frame.shape)
+                face_px = int(min(box[2] - box[0], box[3] - box[1])) if box else 0
+                emit("emotion_debug", ts=now, home=self.home, label=emo[0], raw=self.emotion.last_raw,
+                     conf=round(float(emo[1]), 2), face_px=face_px, stable=(emo[0] == self.emotion.current))
+            if now - self.last_debug >= 1.0:
+                self.last_debug = now
+                emit("vision_debug", ts=now, home=self.home, **self._fall_internals(pose, posture, pred, conf, now))
+
+    def _fall_internals(self, pose, posture: str, pred: str, conf: float, now: float) -> dict:
+        """낙상 판정 근거(모듈 내부값)를 읽기만 한다 — 오탐 튜닝용. src/config.py FallConfig 값과 비교."""
+        import numpy as np
+        f = self.fall
+        vels = [v for _, v in f._vel_window]
+        angle = pose.torso_angle_deg if pose is not None else None
+        return {"pred": pred, "conf": round(conf, 2), "posture": posture, "fall_state": f.state.value,
+                "median_vel": round(float(np.median(vels)), 3) if len(vels) >= 3 else None,
+                "aspect": round(float(pose.aspect_ratio), 2) if pose is not None else None,
+                "torso_angle": round(float(angle), 1) if angle is not None else None,
+                "person_conf": round(float(pose.conf), 2) if pose is not None else None,
+                "drop_recent": bool(f._last_drop_time > 0 and now - f._last_drop_time <= self.cfg.fall.drop_memory_sec),
+                "lying_sec": round(now - f._lying_since, 1) if f._lying_since else 0,
+                "scale_px": round(float(f._scale), 0) if f._scale else None}
 
 
 def main() -> None:
@@ -65,6 +102,8 @@ def main() -> None:
     ap.add_argument("--source", default="phone", help="phone | 카메라 인덱스 | 영상 파일")
     ap.add_argument("--fps", type=float, default=10)
     ap.add_argument("--home", type=int, default=None, help="PC 웹캠일 때 이 집의 센서로 보고 (없으면 첫 집)")
+    ap.add_argument("--debug", action="store_true", help="판정 근거(vision_debug/emotion_debug) 이벤트 + 낙상 스냅샷")
+    ap.add_argument("--log-dir", default=None, help="낙상 스냅샷 저장 폴더 (logs/)")
     args = ap.parse_args()
 
     import cv2
@@ -79,7 +118,8 @@ def main() -> None:
 
     def home(h):
         if h not in homes:
-            homes[h] = HomeVision(h, cfg, tracker)
+            snap = os.path.join(args.log_dir, f"home_{h}") if args.log_dir else None
+            homes[h] = HomeVision(h, cfg, tracker, debug=args.debug, snap_dir=snap)
         return homes[h]
 
     stop = threading.Event()

@@ -152,3 +152,7 @@ input[type=text], textarea, select{
   animation:toastin .25s ease;
 }
 @keyframes toastin{ from{opacity:0; transform:translateY(-10px);} to{opacity:1; transform:none;} }
+
+/* ---- 통합자 추가: 버튼 글자 줄바꿈 방지, 좁은 화면 대응 ---- */
+.btn{ white-space:nowrap; }
+.badge{ white-space:nowrap; }

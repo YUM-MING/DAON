@@ -50,6 +50,9 @@
 
   /* ============================ 로봇 얼굴 ============================ */
   const UI_EMOTION = { neutral:"neutral", happy:"happy", sad:"sad", angry:"angry", surprised:"neutral", fear:"sad" };
+  // 로봇 얼굴 정책: 눈 모양은 상태(듣기/말하기/긴급) 가 기준. 감지된 어르신 감정은 happy 일 때만 같이 웃고,
+  // sad/angry 는 얼굴에 그대로 비추지 않는다 (우울한 어르신에게 우울한 얼굴을 보여 주지 않기 위해). 배지에는 표시.
+  const MIRROR = { happy:"happy", neutral:"neutral" };
   let curState = null, curText = null, curEmotion = null, cdTimer = null;
 
   function showCountdown(sec){
@@ -91,14 +94,26 @@
   function onRobot(m){
     if(m.type !== "state") return;
     const emo = UI_EMOTION[m.emotion] || "neutral";
-    if(emo !== curEmotion && typeof setEmotion === "function"){ curEmotion = emo; setEmotion(emo); }
-    const text = m.text || "";
-    if(m.state !== curState || (text && text !== curText)){
-      curState = m.state; curText = text;
-      if(typeof setState === "function") setState(m.state, text ? {text} : {});
-      if(typeof setContext === "function" && m.state === "speaking") setContext("robotTalking");
+    if(emo !== curEmotion){
+      curEmotion = emo;
+      if(typeof log === "function") log(`어르신 표정 감지: ${m.emotion} (raw=${m.emotion_raw||"-"} conf=${m.emotion_conf ?? "-"})`);
+      const badge = document.getElementById("emotionBadge");
+      if(MIRROR[emo] && typeof setEmotion === "function") setEmotion(MIRROR[emo]);
+      else if(badge) badge.textContent = ({sad:"슬픔(감지)", angry:"화남(감지)"})[emo] || emo;
     }
-    if(m.state === "alert") showCountdown(m.countdown); else showCountdown(null);
+    const text = m.text || "";
+    const stateChanged = m.state !== curState;
+    if(stateChanged || (text && text !== curText)){
+      curState = m.state; curText = text;
+      if(typeof setState === "function") setState(m.state, { text, countdown: m.state === "alert" ? m.countdown : undefined });
+      if(typeof setContext === "function"){
+        if(m.state === "speaking" || m.state === "recover") setContext("robotTalking");
+        else if(m.state === "listening") setContext("userTalking");
+        else if(m.state === "sleep") setContext("noUser");
+      }
+    } else if(m.state === "alert" && m.countdown != null && typeof startAlertCountdown === "function"){
+      startAlertCountdown(m.countdown);
+    }
     if(m.speak && text) speak(text, m.utterance_id);
   }
 
@@ -160,6 +175,10 @@
         const hu = document.getElementById("homeUpdated"); if(hu) hu.textContent = t() + " · " + (m.state||"");
         break;
       }
+      case "debug": {
+        document.dispatchEvent(new CustomEvent("daon:debug", { detail: m }));
+        break;
+      }
       case "notice": {
         if(typeof toast === "function") toast("💬 " + (m.title || "안부 알림") + ": " + (m.body||"").split("\n")[0]);
         if(typeof addEventRow === "function") addEventRow({ time:t(m.ts), type:"정서 알림", result:(m.body||"").split("\n")[0] });
@@ -176,7 +195,12 @@
     window.DaonReady = fetch("/api/robot/me?token=" + encodeURIComponent(token)).then(r => {
       if(r.status === 401){ onUnauthorized(); throw new Error("unauthorized"); }
       return r.json();
-    }).then(info => { window.DaonRobot = info; connect(); return info; });
+    }).then(info => {
+      window.DaonRobot = info; connect();
+      const hi = document.getElementById("robotHomeInfo");
+      if(hi && info.home) hi.textContent = `연결된 집: ${info.home.name} (코드 ${info.home.code})`;
+      return info;
+    });
   }
 
   if(isGuardian){

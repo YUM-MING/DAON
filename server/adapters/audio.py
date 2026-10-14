@@ -20,6 +20,10 @@ class AudioAdapter(WorkerAdapter):
             args.append("--no-stt")
         if m.get("input_device") is not None:
             args += ["--input-device", str(m["input_device"])]
+        if m.get("debug", True):
+            args.append("--debug")
+        if m.get("record", True):
+            args += ["--record-dir", config["logs"]["dir"]]
         super().__init__(bus_for, "audio", WORKERS / "audio_worker.py", MODULES / "audio_ai", args)
 
     def attach_home(self, rt) -> None:

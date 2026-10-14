@@ -43,7 +43,7 @@ python -m pytest server/tests -q   # 시나리오·계정 테스트
 ```
 - 폰: 공개 주소 → 사용자용 → **집 코드** 입력 → 얼굴 화면 (카메라·마이크는 폰이 켜서 서버로 보냄)
 - 보호자: 공개 주소 → 보호자용 → 회원가입/로그인. 시연은 **데모 계정 `demo@daon.local / daon1234`, 집 코드 `123456`**
-진행 상황·모듈별 수정 요청·확인 목록은 [INTEGRATION_STATUS.md](INTEGRATION_STATUS.md).
+진행 상황·모듈별 수정 요청·확인 목록은 [INTEGRATION_STATUS.md](INTEGRATION_STATUS.md), 인식률·표정·낙상 오탐 진단과 튜닝은 [TUNING_GUIDE.md](TUNING_GUIDE.md).
 
 ## 모듈 단독 실행
 

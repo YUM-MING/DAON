@@ -12,12 +12,15 @@ modules:
     mode: worker       # worker | mock | off
     source: phone      # phone(로봇 폰 카메라, 기본) | 0 (PC 웹캠 인덱스) | 영상 파일 경로
     fps: 10            # 폰이 보내는 프레임 상한 (서버 처리 부하 조절)
+    debug: true        # 판정 근거(속도·종횡비·각도·표정 raw/conf)를 대시보드 '실시간 센서 로그'로 + 낙상 순간 스냅샷 logs/home_N/
   audio:
     mode: worker       # worker | mock | off
     source: phone      # phone(로봇 폰 마이크, 기본) | mic (PC 마이크)
     input_device: null # PC 마이크일 때 sounddevice 장치 번호
     stt_model: base    # tiny / base / small
     stt: true
+    debug: true        # 0.5초마다 소리 분류 결과(대화/낙상/소음, P(fall))를 대시보드로
+    record: true       # 폰 마이크 소리를 logs/home_N/mic_*.wav 로 저장 (2분 단위, 약 30분 보관) → 정연 모듈로 재현 가능
   radar:
     mode: "off"        # worker | mock | off  — LD2410B 를 PC USB 에 꽂은 뒤 worker 로 (off 는 따옴표 필수)
     port: /dev/tty.usbserial-0001   # macOS: /dev/tty.usbserial-* , Windows: COM3

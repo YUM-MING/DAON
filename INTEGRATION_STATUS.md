@@ -1,4 +1,6 @@
-# DAON 통합 현황 (2026-10-14, 2차)
+# DAON 통합 현황 (2026-10-14, 3차)
+
+> 실폰 테스트 후 진단·튜닝 방법은 **[TUNING_GUIDE.md](TUNING_GUIDE.md)** (음성 인식률 / 표정 / 낙상 오탐 / 입출력 통일).
 
 통합자 작업 기록. 규약과 전체 설계는 `TEAM_INTEGRATION_GUIDE.md`, 서버 구조는 `server/main.py` 머리 주석 참고.
 
@@ -63,7 +65,8 @@ python -m pytest server/tests -q      # 10개 (시나리오 + 계정/DB)
 2. 움직임 유무(키포인트 이동량)를 `motion` 이벤트로 내보내면 레이더 없이도 대화 모듈 `motion` 입력에 쓸 수 있음.
 3. 폰 전면 카메라(근거리, 320x240 전송)에서 낙상 임계값 재보정 필요.
 
-### 김유진 (웹앱)
+### 웹앱 (이제 우리가 수정 — 유진 파트에서 넘겨받음)
+- 적용 완료: 서버 모드에서 8초 자동 데모·9초 레이더 끊김 데모 생략, `setState` countdown 옵션, 로봇 연결 해제 버튼(🛠 패널), 헤더 반응형, 실시간 센서 로그 카드.
 1. 추가된 파일: `auth.html`, `pair.html`, `js/ws-client.js`, `js/robot-sensors.js`, `js/guardian-ext.js`. `index.html` 의 `selectMode` 두 줄만 수정(페어링/로그인 분기). 나머지 UI 코드는 그대로.
 2. `user-face.js` 로드 시 8초 자동 데모가 서버 메시지와 겹침 → `window.DaonWS` 있으면 생략 요청.
 3. `guardian.js` 9초 뒤 "레이더 끊김" 데모 타이머 제거 요청.

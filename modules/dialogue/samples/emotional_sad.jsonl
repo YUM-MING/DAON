@@ -1,0 +1,4 @@
+{"timestamp": 0, "emotion": "sad", "emotion_conf": 0.85}
+{"timestamp": 15, "stt": "요즘 너무 외로워", "emotion": "sad", "emotion_conf": 0.8}
+{"timestamp": 35, "stt": "아들이 보고 싶어"}
+{"timestamp": 55, "stt": "오늘도 혼자라 쓸쓸해"}

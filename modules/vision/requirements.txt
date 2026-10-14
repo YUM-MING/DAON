@@ -1,0 +1,8 @@
+# 비전 모듈 (이유민 파트) 의존성 — 검증된 버전 고정 (Python 3.12 기준)
+ultralytics==8.4.164      # YOLOv8-pose (포즈 추적)
+opencv-python==5.0.0.93   # 카메라 입력 / 시각화
+numpy==2.5.3
+hsemotion-onnx==0.3.1     # 표정(감정) 인식 (AffectNet 사전학습, ONNX)
+onnxruntime==1.30.0
+torch==2.14.0             # ultralytics 의존 + train.py(파인튜닝)
+torchvision==0.29.0       # train.py(파인튜닝)

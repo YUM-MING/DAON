@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>실버케어 AI — 보호자 대시보드</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/theme-minimal.css">
+<link rel="stylesheet" href="css/guardian.css">
+</head>
+<body>
+
+<header class="gheader">
+  <div class="wrap flex-between">
+    <div class="flex-between" style="gap:10px;">
+      <strong>🛡 실버케어 보호자 대시보드</strong>
+      <span class="badge dot ok" id="connBadge">실시간 연결됨</span>
+    </div>
+    <div class="flex-between" style="gap:8px;">
+      <label class="eval-toggle">
+        <input type="checkbox" id="evalModeToggle" onchange="toggleEvalMode()">
+        개발자/평가 모드
+      </label>
+      <button class="btn sm outline" onclick="simulateAlert()">⚠ 낙상 이벤트 시뮬레이션</button>
+      <button class="btn sm ghost" onclick="goModeSelect()">⚙ 모드 변경</button>
+    </div>
+  </div>
+</header>
+
+<script>
+  // 모드 재설정: 저장된 모드를 지우고 랜딩 화면의 선택 화면으로 돌아감 (index.html?setup=1)
+  function goModeSelect(){
+    localStorage.removeItem("sc_mode");
+    location.href = "index.html?setup=1";
+  }
+</script>
+
+<main class="wrap mt16" style="padding-bottom:120px;">
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="home">홈</button>
+    <button class="tab-btn" data-tab="analysis">분석(평가)</button>
+    <button class="tab-btn" data-tab="report">리포트</button>
+    <button class="tab-btn" data-tab="history">이력</button>
+  </div>
+
+  <!-- ===================== 홈 탭 (4.1, 4.2) ===================== -->
+  <section class="tab-panel active" id="tab-home">
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3>현재 상태</h3><span class="badge ok dot" id="statusBadge">안정</span></div>
+        <div class="row" style="align-items:center;">
+          <div class="silhouette" id="silhouette">🧍</div>
+          <div class="col">
+            <p class="muted mb8">주요 감정</p>
+            <p style="font-size:20px; font-weight:700;" id="homeEmotion">중립 😐</p>
+            <p class="muted mt16 mb8">최근 업데이트</p>
+            <p id="homeUpdated">방금 전</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>기기 연결 상태 (4.2절)</h3>
+        <table>
+          <tr><td>로봇 폰</td><td><span class="badge ok dot">온라인</span></td><td id="devBattery">배터리 82%</td></tr>
+          <tr><td>레이더 센서</td><td><span class="badge ok dot" id="devRadar">수신 중</span></td><td class="muted">마지막 수신 3초 전</td></tr>
+          <tr><td>카메라</td><td><span class="badge ok dot">정상</span></td><td></td></tr>
+          <tr><td>마이크</td><td><span class="badge ok dot">정상</span></td><td></td></tr>
+          <tr><td>Wi-Fi</td><td><span class="badge ok dot">연결됨</span></td><td></td></tr>
+        </table>
+        <div class="warn-banner hidden" id="connWarnBanner">⚠ 일부 센서 연결이 끊겼습니다. 감지가 지연될 수 있어요.</div>
+      </div>
+    </div>
+
+    <div class="card mt16">
+      <h3>최근 이벤트</h3>
+      <table>
+        <thead><tr><th>시각</th><th>유형</th><th>처리 결과</th></tr></thead>
+        <tbody id="recentEventsBody">
+          <tr><td class="muted" colspan="3">아직 기록된 이벤트가 없습니다</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== 분석(평가) 탭 (4.3) ===================== -->
+  <section class="tab-panel" id="tab-analysis">
+    <div class="eval-hidden-note card" id="evalHiddenNote">
+      이 탭은 "정답 라벨이 있는 평가 로그"를 기반으로 합니다. 상단의 <b>개발자/평가 모드</b>를 켜면 확인할 수 있습니다.
+    </div>
+    <div id="evalContent" class="hidden">
+      <div class="card">
+        <h3>A. 센서별 판정 타임라인</h3>
+        <div id="timelineChart"></div>
+      </div>
+      <div class="grid-2 mt16">
+        <div class="card">
+          <h3>B. 정확도 비교 (Recall/Precision/F1)</h3>
+          <div id="barChart"></div>
+        </div>
+        <div class="card">
+          <h3>D. 혼동행렬 (융합 결과)</h3>
+          <div id="confMatrix"></div>
+        </div>
+      </div>
+      <div class="card mt16">
+        <h3>C. 시나리오별 결과표</h3>
+        <table id="scenarioTable">
+          <thead><tr><th>시나리오</th><th>카메라</th><th>소리</th><th>레이더</th><th>융합</th><th>시간당 오탐</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="card mt16">
+        <h3>E. 알림 지연 분포 (목표 15초 이내)</h3>
+        <div id="delayChart"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 리포트 탭 ===================== -->
+  <section class="tab-panel" id="tab-report">
+    <div class="grid-2">
+      <div class="card">
+        <h3>주간 감정 통계</h3>
+        <div id="emotionWeekChart"></div>
+      </div>
+      <div class="card">
+        <h3>대화 요약</h3>
+        <ul class="summary-list" id="convoSummary"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 이력 탭 ===================== -->
+  <section class="tab-panel" id="tab-history">
+    <div class="card">
+      <h3>낙상 이벤트 로그와 처리 결과 (3.2절)</h3>
+      <table>
+        <thead><tr><th>시각</th><th>판정 근거</th><th>상태</th><th>처리 결과</th><th>처리자</th></tr></thead>
+        <tbody id="historyBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- ===================== 긴급 팝업 (4.4) ===================== -->
+<div class="emergency-overlay hidden" id="emergencyOverlay">
+  <div class="emergency-box">
+    <div class="emergency-pulse">🚨</div>
+    <h2>낙상 의심 감지!</h2>
+    <p id="emgSensors" class="muted">판정 근거: pose, audio 감지됨 · radar 미감지</p>
+    <p id="emgTime" class="muted"></p>
+
+    <div class="emg-actions">
+      <a class="btn danger block" href="tel:119" id="btnCall119">📞 119 바로 전화하기</a>
+      <button class="btn outline block" onclick="openMsgModal()">💬 로봇에 메시지 전달</button>
+      <button class="btn success block" onclick="resolveAlert('guardian_confirmed')">✅ 확인 완료</button>
+      <button class="btn warn block" onclick="resolveAlert('false_alarm')">🙅 오탐 처리</button>
+    </div>
+    <p class="muted mt16" id="emgTimeout">미처리 시 30초마다 재알림이 울립니다 · 재알림 <span id="reAlertCount">0</span>회</p>
+  </div>
+</div>
+
+<!-- 메시지 전달 모달 -->
+<div class="emergency-overlay hidden" id="msgModal" style="background:rgba(0,0,0,.6);">
+  <div class="emergency-box" style="max-width:420px;">
+    <h3>로봇에 메시지 전달</h3>
+    <textarea id="msgInput" rows="3" placeholder="어르신께 전달할 메시지를 입력하세요"></textarea>
+    <div class="row mt16">
+      <button class="btn outline block" onclick="closeMsgModal()">취소</button>
+      <button class="btn block" onclick="sendMsgToRobot()">TTS로 전달</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/guardian.js"></script>
+</body>
+</html>

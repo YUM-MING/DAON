@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>실버케어 AI — 진입 화면</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/theme-minimal.css">
+<style>
+  .landing{ min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:40px; padding:40px 20px 100px; }
+  .brand{ text-align:center; }
+  .brand h1{ font-size:28px; margin:0 0 6px; }
+  .brand p{ color:var(--muted); margin:0; }
+  .choice-row{ display:flex; gap:24px; flex-wrap:wrap; justify-content:center; width:100%; max-width:760px; }
+  .choice-card{
+    flex:1; min-width:260px; padding:36px 24px; text-align:center; cursor:pointer;
+    transition:transform .25s, border-color .25s;
+  }
+  .choice-card:hover{ transform:translateY(-4px); border-color:var(--accent); }
+  .choice-card .icon{ width:72px; height:72px; margin:0 auto 18px; border-radius:50%; background:var(--accent); opacity:.15; }
+  .choice-card h3{ font-size:18px; margin-bottom:8px; }
+  .choice-card p{ color:var(--muted); font-size:13px; line-height:1.5; }
+  .setup-note{ max-width:760px; font-size:13px; color:var(--muted); text-align:center; line-height:1.7; }
+  .setup-note b{ color:var(--fg); }
+  .first-run{
+    position:fixed; inset:0; background:rgba(5,8,16,.88); z-index:500;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .first-run .card{ max-width:420px; text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="landing">
+  <div class="brand">
+    <h1>👵 실버케어 AI</h1>
+    <p>어르신 돌봄 로봇 · 보호자 모니터링 시스템</p>
+  </div>
+
+  <div class="choice-row">
+    <div class="card choice-card" onclick="selectMode('user')">
+      <div class="icon"></div>
+      <h3>사용자용</h3>
+      <p>로봇 얼굴 모드<br>어르신이 사용하는 화면입니다</p>
+    </div>
+    <div class="card choice-card" onclick="selectMode('guardian')">
+      <div class="icon"></div>
+      <h3>보호자용</h3>
+      <p>모니터링 대시보드<br>보호자가 상태를 확인하는 화면입니다</p>
+    </div>
+  </div>
+
+  <div class="setup-note">
+    <b>최초 세팅 안내</b> — 모바일 브라우저는 사용자 터치 없이 카메라·마이크 접근과 오디오 재생을 허용하지 않습니다.
+    설치 시 보호자가 아래 "시작" 버튼을 한 번 눌러주세요. 이후에는 선택한 모드가 기기에 저장되어 자동으로 진입합니다.<br>
+    <b>모드를 다시 바꾸려면</b> — 사용자(로봇 얼굴) 화면에서는 화면 우상단 모서리를 5초간 길게 누르고,
+    보호자 대시보드에서는 상단의 <b>"⚙ 모드 변경"</b> 버튼을 누르세요.
+  </div>
+</div>
+
+<!-- 최초 1회 설치 과정 모달 -->
+<div class="first-run" id="firstRun">
+  <div class="card">
+    <h3>🔧 설치 과정 (최초 1회)</h3>
+    <p class="muted" style="font-size:13px; line-height:1.6;">
+      카메라·마이크 권한과 오디오 자동 재생을 허용하려면 버튼을 눌러주세요.<br>
+      이 과정은 어르신이 아닌 <b>설치자(보호자)</b>가 진행합니다.
+    </p>
+    <button class="btn block mt16" onclick="completeFirstRun()">시작하기</button>
+  </div>
+</div>
+
+<script src="js/common.js"></script>
+<script>
+  // 저장된 모드가 있으면 바로 해당 화면으로 자동 진입 (기획서 1장)
+  // 단, URL에 ?setup=1 이 붙어 있으면 강제로 선택 화면에 머문다 (모드 재설정용 진입점)
+  const params = new URLSearchParams(location.search);
+  const forceSetup = params.get("setup") === "1";
+  const savedMode = localStorage.getItem("sc_mode");
+  const firstRunDone = localStorage.getItem("sc_first_run");
+
+  if(!firstRunDone){
+    document.getElementById("firstRun").style.display = "flex";
+  } else {
+    document.getElementById("firstRun").style.display = "none";
+    if(!forceSetup){
+      if(savedMode === "user") location.href = "user-face.html";
+      if(savedMode === "guardian") location.href = "guardian-dashboard.html";
+    } else {
+      toast("모드를 다시 선택해주세요");
+    }
+  }
+
+  function completeFirstRun(){
+    localStorage.setItem("sc_first_run","1");
+    document.getElementById("firstRun").style.display = "none";
+    toast("설치가 완료되었습니다. 모드를 선택해주세요.");
+  }
+
+  function selectMode(mode){
+    localStorage.setItem("sc_mode", mode);
+    location.href = mode === "user" ? "user-face.html" : "guardian-dashboard.html";
+  }
+</script>
+</body>
+</html>

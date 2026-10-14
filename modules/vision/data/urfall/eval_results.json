@@ -1,0 +1,373 @@
+{
+  "dataset": "/Users/yuming/CODING/silvercare-tracking/data/urfall",
+  "n_videos": 70,
+  "confusion": {
+    "TP": 23,
+    "FN": 7,
+    "FP": 14,
+    "TN": 26
+  },
+  "precision": 0.622,
+  "recall": 0.767,
+  "f1": 0.687,
+  "accuracy": 0.7,
+  "elapsed_sec": 1111.7,
+  "config": {
+    "drop_velocity_threshold": 0.45,
+    "lying_aspect_ratio": 1.1,
+    "lying_torso_angle_deg": 55.0,
+    "fallen_confirm_sec": 0.5
+  },
+  "results": [
+    {
+      "scenario_id": "fall-01",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-02",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-03",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-04",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-05",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-06",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-07",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-08",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-09",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-10",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-11",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-12",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-13",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-14",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-15",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-16",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-17",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "fall-18",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "fall-19",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-20",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-21",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "fall-22",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-23",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-24",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-25",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-26",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "fall-27",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "fall-28",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "fall-29",
+      "gt": "fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "fall-30",
+      "gt": "fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-01",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-02",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-03",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-04",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-05",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-06",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-07",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-08",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-09",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-10",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-11",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-12",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-13",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-14",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-15",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-16",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-17",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-18",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-19",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-20",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-21",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-22",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-23",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-24",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-25",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-26",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-27",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-28",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-29",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-30",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-31",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-32",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-33",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-34",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-35",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-36",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-37",
+      "gt": "no_fall",
+      "pred": "no_fall"
+    },
+    {
+      "scenario_id": "adl-38",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-39",
+      "gt": "no_fall",
+      "pred": "fall"
+    },
+    {
+      "scenario_id": "adl-40",
+      "gt": "no_fall",
+      "pred": "fall"
+    }
+  ]
+}

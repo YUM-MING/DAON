@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>실버케어 AI — 로봇 얼굴 (사용자용)</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/robot-face.css">
+<style>
+  /* 이 화면은 실제 로봇 하드웨어(갤럭시 폰, 가로 거치)에 표시되는 화면이므로
+     공통 장식 일부를 숨기고 전용 레이아웃을 사용합니다. (테마는 미니멀로 확정되어
+     테마 스위처 자체가 제거되었습니다) */
+  body{ background:#000; }
+
+  .top-badges{
+    position:fixed; top:14px; left:14px; z-index:50;
+    display:flex; gap:8px; flex-wrap:wrap; max-width:70vw;
+  }
+  .top-badges .badge{ background:rgba(255,255,255,.08); color:#cfd8e6; font-size:11px; }
+
+  .speech-bubble{
+    position:fixed; bottom:4vh; left:50%; translate:-50% 0;
+    max-width:60vw; min-height:20px; text-align:center;
+    background:rgba(255,255,255,.08); color:#eef2f7;
+    border:1px solid rgba(255,255,255,.12);
+    border-radius:16px; padding:10px 20px; font-size:clamp(13px,2vh,18px);
+    z-index:40;
+  }
+
+  .countdown-ring{
+    position:fixed; top:50%; left:50%; translate:-50% -50%;
+    font-size:min(14vh,120px); font-weight:800; color:#ff3b3b; z-index:45;
+    pointer-events:none;
+  }
+
+  /* 우상단 모서리에는 "corner-reset"(모드 재설정, 5초 길게 누르기) 투명 레이어가
+     z-index:9998로 깔려 있어, 같은 자리의 이 버튼 클릭을 가로채던 문제가 있었다.
+     개발자 패널 토글 버튼을 그보다 위(z-index:9999)로 올려 클릭이 버튼에 먼저 닿도록 한다. */
+  .panel-toggle{ position:fixed; right:14px; top:14px; z-index:9999; opacity:.5; }
+  .panel-toggle:hover{ opacity:1; }
+
+  .dev-panel{
+    position:fixed; right:0; top:0; bottom:0; width:340px; max-width:90vw;
+    background:rgba(10,14,22,.95); color:#eef2f7;
+    border-left:1px solid rgba(255,255,255,.12);
+    transform:translateX(100%); transition:transform .3s ease; z-index:200;
+    overflow-y:auto; padding:60px 16px 20px; font-size:13px;
+  }
+  .dev-panel.open{ transform:translateX(0); }
+  .dev-panel h4{ font-size:12px; color:#92a1b8; margin:16px 0 8px; text-transform:uppercase; letter-spacing:.5px; }
+  .dev-panel .btn-grid{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .dev-panel .btn{ font-size:12px; padding:8px 10px; }
+  .log-list{ font-size:11px; max-height:140px; overflow-y:auto; display:flex; flex-direction:column-reverse; gap:4px; }
+  .log-list div{ padding:4px 7px; border-radius:6px; background:rgba(255,255,255,.05); }
+
+  .device-frame-note{
+    position:fixed; bottom:4px; right:8px; font-size:9px; color:#4a5568; z-index:30;
+  }
+</style>
+</head>
+<body>
+
+<!-- 세로로 들었을 때 안내: 갤럭시 폰을 가로로 눕혀 사용 -->
+<div class="rotate-notice">
+  <div class="icon">📱</div>
+  <h2 style="margin:0;">기기를 가로로 돌려주세요</h2>
+  <p style="color:#9fb0c3; font-size:14px;">이 로봇 화면은 갤럭시 폰을 가로로 거치했을 때<br>정상적으로 표시되도록 설계되었습니다.</p>
+</div>
+
+<!-- 가로 모드 스테이지 -->
+<div class="phone-landscape">
+  <div class="top-badges">
+    <span class="badge dot ok" id="stateBadge">대기(sleep)</span>
+    <span class="badge" id="emotionBadge">중립</span>
+    <span class="badge" id="eyeBadge">기본형</span>
+    <span class="badge" id="contextBadge">평상시</span>
+  </div>
+
+  <div class="countdown-ring hidden" id="countdownRing"></div>
+
+  <div class="face-screen" id="face" data-state="sleep" data-emotion="neutral" data-eye="default">
+    <div class="eye blink"><div class="pupil"></div><div class="highlight"></div></div>
+    <div class="eye blink"><div class="pupil"></div><div class="highlight"></div></div>
+  </div>
+
+  <div class="speech-bubble" id="speech">…</div>
+  <div class="device-frame-note">Galaxy · Landscape 기준 레이아웃</div>
+</div>
+
+<button class="btn sm ghost panel-toggle" onclick="togglePanel()">🛠</button>
+
+<!-- 시연/개발자 패널: 기획서 6장 메시지 규약을 버튼으로 시뮬레이션 -->
+<div class="dev-panel" id="devPanel">
+  <h4>상태 전환 (2.1절)</h4>
+  <div class="btn-grid">
+    <button class="btn sm outline" onclick="setState('sleep')">sleep</button>
+    <button class="btn sm outline" onclick="setState('wake')">wake</button>
+    <button class="btn sm outline" onclick="setState('listening')">listening</button>
+    <button class="btn sm outline" onclick="setState('thinking')">thinking</button>
+    <button class="btn sm outline" onclick="setState('speaking')">speaking</button>
+    <button class="btn sm outline" onclick="setState('recover')">recover</button>
+  </div>
+
+  <h4>감정 매핑 (2.4절)</h4>
+  <div class="btn-grid">
+    <button class="btn sm outline" onclick="setEmotion('neutral')">중립</button>
+    <button class="btn sm outline" onclick="setEmotion('happy')">기쁨</button>
+    <button class="btn sm outline" onclick="setEmotion('sad')">슬픔</button>
+    <button class="btn sm outline" onclick="setEmotion('angry')">화남(차분)</button>
+  </div>
+
+  <h4>상황별 눈 자동 매핑 테스트</h4>
+  <div class="btn-grid">
+    <button class="btn sm outline" onclick="setContext('idle')">평상시(기본)</button>
+    <button class="btn sm outline" onclick="setContext('happy')">행복한 상태</button>
+    <button class="btn sm outline" onclick="setContext('userTalking')">사용자가 말할 때</button>
+    <button class="btn sm outline" onclick="setContext('noUser')">사용자 없음/대화 없음</button>
+    <button class="btn sm outline" onclick="setContext('robotTalking')">로봇이 말할 때</button>
+    <button class="btn sm outline" onclick="setContext('userMoving')">사용자 움직임 감지</button>
+  </div>
+
+  <h4>눈 디자인 (레퍼런스 10종, 수동)</h4>
+  <div class="btn-grid">
+    <button class="btn sm outline" onclick="setEye('default')">기본형</button>
+    <button class="btn sm outline" onclick="setEye('happy')">행복한 눈</button>
+    <button class="btn sm outline" onclick="setEye('curious')">호기심</button>
+    <button class="btn sm outline" onclick="setEye('sleepy')">졸린 눈</button>
+    <button class="btn sm outline" onclick="setEye('sparkle')">반짝이는 눈</button>
+    <button class="btn sm outline" onclick="setEye('side')">옆눈</button>
+    <button class="btn sm outline" onclick="setEye('heart')">하트 눈</button>
+    <button class="btn sm outline" onclick="setEye('joy')">기쁨의 눈</button>
+    <button class="btn sm outline" onclick="setEye('square')">네모형 눈</button>
+    <button class="btn sm outline" onclick="setEye('ring')">링형 눈</button>
+    <button class="btn sm danger" onclick="setEye('emergency')">🚨 긴급 눈</button>
+  </div>
+  <button class="btn sm ghost block mt8" onclick="resetEyeAuto()">↺ 자동 매핑으로 복귀</button>
+
+  <h4>오탐 UX 시나리오 (3.1절)</h4>
+  <div style="display:flex; flex-direction:column; gap:8px;">
+    <button class="btn sm danger" onclick="runScenario('positive')">① 긍정 응답 → 오탐 해제</button>
+    <button class="btn sm danger" onclick="runScenario('help')">② 도움 요청 → 즉시 에스컬레이션</button>
+    <button class="btn sm danger" onclick="runScenario('noresponse')">③ 무응답+무움직임 → 긴급 확정</button>
+    <button class="btn sm danger" onclick="runScenario('motion')">④ 무응답+움직임 → 재확인</button>
+    <button class="btn sm danger" onclick="runScenario('unclear')">⑤ 애매한 응답 → 재확인→긴급</button>
+  </div>
+
+  <h4>이벤트 로그</h4>
+  <div class="log-list" id="logList"></div>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/user-face.js"></script>
+</body>
+</html>

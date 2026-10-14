@@ -1,0 +1,154 @@
+/* =========================================================
+   base.css — 공통 리셋 / 레이아웃 / 컴포넌트 (테마 무관 공통 골격)
+   실제 색상·모양은 theme-*.css 에서 CSS 변수로 덮어씁니다.
+========================================================= */
+:root{
+  --bg: #0e1726;
+  --fg: #eef2f7;
+  --muted: #9fb0c3;
+  --card-bg: #15213399;
+  --accent: #4f8cff;
+  --accent-2: #7bd0ff;
+  --danger: #ff4d4f;
+  --warn: #ffb020;
+  --success: #3ddc84;
+  --radius: 20px;
+  --radius-sm: 10px;
+  --shadow: 0 10px 30px rgba(0,0,0,.35);
+  --border-w: 1px;
+  --font: "Pretendard","Noto Sans KR",system-ui,-apple-system,sans-serif;
+  --transition: .35s cubic-bezier(.4,0,.2,1);
+  --maxw: 1080px;
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--fg);
+  font-family:var(--font);
+  transition:background var(--transition), color var(--transition);
+  -webkit-font-smoothing:antialiased;
+}
+img,svg,canvas{ display:block; max-width:100%; }
+a{ color:inherit; }
+button{ font-family:inherit; }
+
+.wrap{ max-width:var(--maxw); margin:0 auto; padding:0 20px; }
+
+/* ---------- 버튼 ---------- */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  padding:12px 20px;
+  border-radius:var(--radius-sm);
+  border:var(--border-w) solid var(--accent);
+  background:var(--accent);
+  color:#fff;
+  font-size:15px; font-weight:600;
+  cursor:pointer;
+  transition:transform var(--transition), filter var(--transition), background var(--transition);
+  user-select:none;
+}
+.btn:hover{ filter:brightness(1.08); }
+.btn:active{ transform:scale(.97); }
+.btn.ghost{ background:transparent; color:var(--fg); }
+.btn.outline{ background:transparent; color:var(--accent); }
+.btn.danger{ background:var(--danger); border-color:var(--danger); }
+.btn.success{ background:var(--success); border-color:var(--success); color:#07331c; }
+.btn.warn{ background:var(--warn); border-color:var(--warn); color:#3a2900; }
+.btn.sm{ padding:7px 12px; font-size:13px; border-radius:8px; }
+.btn.block{ width:100%; }
+.btn:disabled{ opacity:.4; cursor:not-allowed; }
+
+/* ---------- 카드 ---------- */
+.card{
+  background:var(--card-bg);
+  border:var(--border-w) solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:20px;
+  transition:border-color var(--transition);
+}
+.card h3{ margin:0 0 12px; font-size:16px; }
+.card .card-head{
+  display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;
+}
+
+/* ---------- 배지 ---------- */
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 10px; border-radius:999px;
+  font-size:12px; font-weight:700;
+  background:color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.badge.dot::before{ content:""; width:8px; height:8px; border-radius:50%; background:currentColor; }
+.badge.ok{ color:var(--success); }
+.badge.warn{ color:var(--warn); }
+.badge.danger{ color:var(--danger); }
+
+/* ---------- 탭 ---------- */
+.tabs{ display:flex; gap:4px; border-bottom:2px solid color-mix(in srgb, var(--fg) 10%, transparent); margin-bottom:20px; overflow-x:auto; }
+.tab-btn{
+  padding:12px 18px; background:none; border:none; color:var(--muted);
+  font-size:14px; font-weight:700; cursor:pointer; white-space:nowrap;
+  border-bottom:3px solid transparent; margin-bottom:-2px;
+  transition:color var(--transition), border-color var(--transition);
+}
+.tab-btn.active{ color:var(--accent); border-color:var(--accent); }
+.tab-panel{ display:none; animation:fadein .3s ease; }
+.tab-panel.active{ display:block; }
+@keyframes fadein{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+
+/* ---------- 테이블 ---------- */
+table{ width:100%; border-collapse:collapse; font-size:13px; }
+th,td{ padding:9px 10px; text-align:left; border-bottom:1px solid color-mix(in srgb, var(--fg) 10%, transparent); }
+th{ color:var(--muted); font-weight:700; font-size:12px; }
+
+/* ---------- 폼 ---------- */
+input[type=text], textarea, select{
+  width:100%; padding:10px 12px; border-radius:var(--radius-sm);
+  border:1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  background:color-mix(in srgb, var(--bg) 70%, #000 10%);
+  color:var(--fg); font-size:14px;
+}
+
+/* ---------- 유틸 ---------- */
+.row{ display:flex; gap:16px; flex-wrap:wrap; }
+.col{ flex:1; min-width:240px; }
+.grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.grid-3{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+@media (max-width:760px){ .grid-2,.grid-3{ grid-template-columns:1fr; } }
+.muted{ color:var(--muted); }
+.center{ text-align:center; }
+.mt0{margin-top:0}.mt8{margin-top:8px}.mt16{margin-top:16px}.mt24{margin-top:24px}.mt32{margin-top:32px}
+.mb0{margin-bottom:0}.mb8{margin-bottom:8px}.mb16{margin-bottom:16px}
+.flex-between{ display:flex; align-items:center; justify-content:space-between; }
+.flex-center{ display:flex; align-items:center; justify-content:center; }
+.hidden{ display:none !important; }
+
+/* ---------- 모드 재설정 코너 제스처 ---------- */
+.corner-reset{
+  position:fixed; top:0; right:0; width:56px; height:56px; z-index:9998;
+  cursor:pointer;
+}
+.corner-reset::after{
+  content:""; position:absolute; top:8px; right:8px; width:8px; height:8px;
+  border-radius:50%; background:color-mix(in srgb, var(--fg) 25%, transparent);
+}
+.corner-reset .progress{
+  position:absolute; inset:0; border-radius:0 0 0 56px;
+  background:conic-gradient(var(--accent) var(--p,0%), transparent 0);
+  opacity:0; transition:opacity .15s;
+}
+.corner-reset.pressing .progress{ opacity:.35; }
+
+/* ---------- 토스트 ---------- */
+.toast-area{ position:fixed; top:18px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; gap:8px; z-index:10000; }
+.toast{
+  background:color-mix(in srgb, var(--bg) 40%, #000 30%);
+  border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+  color:var(--fg); padding:10px 18px; border-radius:999px; font-size:13px; box-shadow:var(--shadow);
+  animation:toastin .25s ease;
+}
+@keyframes toastin{ from{opacity:0; transform:translateY(-10px);} to{opacity:1; transform:none;} }

@@ -1,0 +1,5 @@
+{"timestamp": 0, "stt": "안녕"}
+{"timestamp": 10, "stt": "점심은 된장찌개 먹었어"}
+{"timestamp": 20, "stt": "오늘 날씨가 좋네", "emotion": "happy", "emotion_conf": 0.9}
+{"timestamp": 30, "stt": "고마워"}
+{"timestamp": 40, "stt": "이제 잘게"}

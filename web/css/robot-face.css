@@ -1,0 +1,194 @@
+/* =========================================================
+   robot-face.css — 실제 하드웨어(팬더 로봇) 화면에 표시될 얼굴 디자인
+   레퍼런스 3D 모델링 이미지의 10가지 눈 모양 + 긴급 모드 전용 눈(11번째)을 CSS로 재현
+   갤럭시 폰 "가로(landscape)" 고정 사용을 전제로 설계
+========================================================= */
+
+html, body{ background:#000; overflow:hidden; height:100%; }
+
+/* ---------- 가로 모드 전용 스테이지 ---------- */
+.phone-landscape{
+  position:fixed; inset:0;
+  background:#000;
+  display:flex; align-items:center; justify-content:center;
+}
+
+.face-screen{
+  position:relative;
+  width:100%; height:100%;
+  background:#000;
+  display:flex; align-items:center; justify-content:center;
+  gap:10vw;
+}
+
+/* ---------- 눈 공통 구조 ---------- */
+.eye{
+  position:relative;
+  width:18vh; height:18vh;
+  background:#fff;
+  border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  transition:all .28s cubic-bezier(.4,0,.2,1);
+  flex-shrink:0;
+}
+.eye .pupil{
+  width:48%; height:48%; background:#0a0a0a; border-radius:50%;
+  position:relative; transition:all .25s;
+}
+/* 가장 작은 흰색 하이라이트: 검은 동공(.pupil) 영역 안쪽에 확실히 들어가도록
+   .eye 박스 기준 좌표를 동공이 실제로 차지하는 범위(가운데 정렬) 내부로 계산 */
+.eye .highlight{
+  position:absolute; width:11%; height:11%; background:#fff; border-radius:50%;
+  top:33%; left:58%;
+  z-index:2;
+}
+.eye.blink{ animation:eyeblink 4.4s infinite; }
+@keyframes eyeblink{ 0%,90%,100%{ transform:scaleY(1);} 95%{ transform:scaleY(.1);} }
+
+/* =========================================================
+   10가지 눈 스타일 — .face-screen[data-eye="..."] 로 전환
+========================================================= */
+
+/* 1. 기본형: 단순 동그란 눈 + 하이라이트 (이미 공통 구조가 기본값) */
+.face-screen[data-eye="default"] .eye .pupil{ width:48%; height:48%; }
+
+/* 2. 행복한 눈: 아치형(⌒) 곡선 — 위로 볼록한 반원 테두리 */
+.face-screen[data-eye="happy"] .eye{
+  background:transparent; width:20vh; height:20vh;
+}
+.face-screen[data-eye="happy"] .eye::before{
+  content:""; position:absolute; inset:0;
+  border:1.6vh solid #fff; border-radius:50%;
+  clip-path: inset(0 0 52% 0);
+}
+.face-screen[data-eye="happy"] .eye .pupil,
+.face-screen[data-eye="happy"] .eye .highlight{ display:none; }
+
+/* 3. 호기심: 더 크고 동그란 눈 + 큰 동공 (집중하는 느낌) */
+.face-screen[data-eye="curious"] .eye{ width:22vh; height:22vh; }
+.face-screen[data-eye="curious"] .eye .pupil{ width:62%; height:62%; }
+
+/* 4. 졸린 눈: 아래로 처진 반원(눈꺼풀이 반 덮인 느낌) */
+.face-screen[data-eye="sleepy"] .eye{
+  background:transparent; width:20vh; height:11vh;
+}
+.face-screen[data-eye="sleepy"] .eye::before{
+  content:""; position:absolute; inset:0;
+  border:1.6vh solid #fff; border-radius:0 0 50% 50% / 0 0 100% 100%;
+}
+.face-screen[data-eye="sleepy"] .eye .pupil,
+.face-screen[data-eye="sleepy"] .eye .highlight{ display:none; }
+
+/* 5. 반짝이는 눈: 기본형 눈(흰 원 + 검은 동공 + 흰 하이라이트)은 그대로 유지하고,
+   그 위에 작은 흰색 별 모양이 추가로 반짝이며 나타나는 구조 */
+.face-screen[data-eye="sparkle"] .eye .pupil{ width:48%; height:48%; }
+/* 작은 별은 검은 동공(26%~74% 범위) 안쪽, 하이라이트와 겹치지 않는 반대쪽 모서리에 배치 */
+.face-screen[data-eye="sparkle"] .eye::after{
+  content:"";
+  position:absolute; width:16%; height:16%;
+  top:46%; left:28%;
+  background:#fff;
+  clip-path: polygon(50% 0%, 63% 37%, 100% 50%, 63% 63%, 50% 100%, 37% 63%, 0% 50%, 37% 37%);
+  z-index:3;
+  animation: sparkleTwinkle 1.1s ease-in-out infinite;
+}
+.face-screen[data-eye="sparkle"] .eye:last-child::after{ animation-delay:.3s; }
+@keyframes sparkleTwinkle{
+  0%,100%{ transform:scale(.4); opacity:.3; }
+  50%{ transform:scale(1); opacity:1; }
+}
+
+/* 6. 옆눈: 동공이 한쪽으로 쏠려 다른 방향을 보는 느낌 */
+.face-screen[data-eye="side"] .eye .pupil{ transform:translateX(-22%); }
+.face-screen[data-eye="side"] .eye:last-child .pupil{ transform:translateX(-22%); }
+
+/* 7. 하트 눈: 동공이 하트 모양 (사랑스러운 느낌) */
+.face-screen[data-eye="heart"] .eye .pupil{
+  width:62%; height:62%; background:#0a0a0a; border-radius:0;
+  clip-path: path("M50 85 C20 60,5 40,5 22 C5 8,18 0,32 5 C42 8,48 16,50 24 C52 16,58 8,68 5 C82 0,95 8,95 22 C95 40,80 60,50 85 Z");
+  clip-path: polygon(50% 100%, 20% 70%, 5% 45%, 10% 20%, 30% 5%, 50% 20%, 70% 5%, 90% 20%, 95% 45%, 80% 70%);
+}
+.face-screen[data-eye="heart"] .eye .highlight{ display:none; }
+
+/* 8. 기쁨의 눈: 아래로 볼록한 곡선(⌣) + 짧은 속눈썹 느낌의 선 (신나는 느낌) */
+.face-screen[data-eye="joy"] .eye{
+  background:transparent; width:20vh; height:20vh;
+}
+.face-screen[data-eye="joy"] .eye::before{
+  content:""; position:absolute; inset:0;
+  border:1.6vh solid #fff; border-radius:50%;
+  clip-path: inset(48% 0 0 0);
+}
+.face-screen[data-eye="joy"] .eye::after{
+  content:""; position:absolute; top:6%; right:-6%;
+  width:1.2vh; height:3.4vh; background:#fff; border-radius:2px;
+  transform:rotate(25deg);
+}
+.face-screen[data-eye="joy"] .eye:first-child::after{ right:auto; left:-6%; transform:rotate(-25deg); }
+.face-screen[data-eye="joy"] .eye .pupil,
+.face-screen[data-eye="joy"] .eye .highlight{ display:none; }
+
+/* 9. 네모형 눈: 둥근 사각형 (직관적/단순한 느낌) */
+.face-screen[data-eye="square"] .eye{ border-radius:22%; width:17vh; height:17vh; }
+.face-screen[data-eye="square"] .eye .pupil{ border-radius:18%; width:50%; height:50%; }
+
+/* 10. 링형 눈: 도넛 모양 (미래지향적 느낌) */
+.face-screen[data-eye="ring"] .eye .pupil{
+  width:70%; height:70%; background:transparent; border:2.4vh solid #0a0a0a; box-sizing:border-box;
+}
+.face-screen[data-eye="ring"] .eye .highlight{ display:none; }
+
+/* 11. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
+   위급 상황임을 눈으로도 즉시 알 수 있게 함 (상태 alert 자동 매핑 + 수동 선택 모두 지원) */
+.face-screen[data-eye="emergency"] .eye{
+  width:24vh; height:24vh; background:#fff;
+  animation: emergencyPulse .6s ease-in-out infinite;
+}
+.face-screen[data-eye="emergency"] .eye .pupil{
+  width:62%; height:62%; background:#ff2d3a;
+  animation: emergencyPupil .6s ease-in-out infinite;
+}
+.face-screen[data-eye="emergency"] .eye .highlight{ display:none; }
+@keyframes emergencyPulse{
+  0%,100%{ box-shadow:0 0 0 0 rgba(255,45,58,.55); transform:scale(1); }
+  50%{ box-shadow:0 0 6vh 1.5vh rgba(255,45,58,.75); transform:scale(1.05); }
+}
+@keyframes emergencyPupil{
+  0%,100%{ background:#ff2d3a; }
+  50%{ background:#ff6a73; }
+}
+
+/* =========================================================
+   상태(state) 애니메이션 — 2.1절 Zero-Touch 흐름
+========================================================= */
+.face-screen[data-state="sleep"]{ opacity:.35; }
+.face-screen[data-state="sleep"] .eye{ animation:none; transform:scaleY(.12); }
+
+.face-screen[data-state="wake"]{ animation:wakepop .45s ease; }
+@keyframes wakepop{ 0%{ transform:scale(.88); opacity:0;} 60%{ transform:scale(1.05);} 100%{ transform:scale(1); opacity:1;} }
+
+.face-screen[data-state="listening"] .eye{ transform:scale(1.08); }
+
+.face-screen[data-state="thinking"] .eye .pupil{ animation:lookaround 2.4s ease-in-out infinite; }
+@keyframes lookaround{ 0%,100%{ translate:0 0;} 25%{ translate:-18% -8%;} 50%{ translate:18% -8%;} 75%{ translate:0 10%;} }
+
+.face-screen[data-state="speaking"] .eye{ animation:talkbob .5s ease-in-out infinite; }
+@keyframes talkbob{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.04);} }
+
+.face-screen[data-state="alert"]{ animation:alertflash 1s infinite; }
+.face-screen[data-state="alert"] .eye{ width:22vh; height:22vh; }
+.face-screen[data-state="alert"] .eye .pupil{ background:#ff2d3a; }
+@keyframes alertflash{ 0%,100%{ box-shadow:none;} 50%{ box-shadow: inset 0 0 0 100vmax rgba(255,30,40,.12);} }
+
+.face-screen[data-state="recover"] .eye{ transform:scale(1); }
+
+/* 가로 고정 안내 오버레이 (세로로 들었을 때 표시) */
+.rotate-notice{
+  position:fixed; inset:0; z-index:5000; background:#000;
+  display:none; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+  color:#fff; text-align:center; padding:30px;
+}
+@media (orientation:portrait){ .rotate-notice{ display:flex; } .phone-landscape{ display:none; } }
+.rotate-notice .icon{ font-size:64px; animation:rotateicon 1.6s ease-in-out infinite; }
+@keyframes rotateicon{ 0%,100%{ transform:rotate(0deg);} 50%{ transform:rotate(90deg);} }
+

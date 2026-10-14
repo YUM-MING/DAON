@@ -1,0 +1,59 @@
+/* =========================================================
+   테마 3: 미니멀 플랫(라이트) 스타일 — 고대비·저채도 비교용
+   밝은 배경, 큰 글자, 최소 장식. 어르신 가독성 비교 시안
+========================================================= */
+body.theme-minimal{
+  --bg: #f4f6f9;
+  --fg: #1b2330;
+  --muted: #5b6b82;
+  --card-bg: #ffffff;
+  --accent: #2957d8;
+  --accent-2: #2957d8;
+  --danger: #d8303a;
+  --warn: #c7820a;
+  --success: #1f9d5c;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow: 0 6px 18px rgba(20,30,50,.08);
+  --border-w: 2px;
+  --font: "Pretendard","Noto Sans KR",system-ui,sans-serif;
+}
+body.theme-minimal .card{ border-color:#e3e8f0; }
+body.theme-minimal .btn{ box-shadow:none; font-weight:700; }
+
+/* 로봇 얼굴 - 단순 도형, 고대비 */
+body.theme-minimal .robot-face{
+  width:min(70vw,400px); height:min(70vw,400px);
+  background:#1b2330; border-radius:40px;
+  position:relative; display:flex; align-items:center; justify-content:center; gap:16%;
+  box-shadow:0 20px 40px rgba(20,30,50,.18);
+}
+body.theme-minimal .eye{
+  width:18%; aspect-ratio:1/1.2; background:#fff; border-radius:30%;
+  transition:height .2s, border-radius .2s, background .2s;
+}
+body.theme-minimal .eye.blink{ animation:mblink 5s infinite; }
+@keyframes mblink{ 0%,94%,100%{transform:scaleY(1);} 97%{transform:scaleY(.1);} }
+body.theme-minimal .mouth{
+  position:absolute; bottom:22%; left:50%; translate:-50% 0;
+  width:22%; height:5%; background:#fff; border-radius:10px;
+}
+
+body.theme-minimal .robot-face[data-state="sleep"] .eye{ height:10%; border-radius:10px; background:#5b6b82; }
+body.theme-minimal .robot-face[data-state="sleep"] .mouth{ opacity:0; }
+body.theme-minimal .robot-face[data-state="sleep"]{ filter:brightness(.8); }
+body.theme-minimal .robot-face[data-state="wake"] .eye{ height:38%; }
+body.theme-minimal .robot-face[data-state="listening"] .eye{ height:40%; width:20%; }
+body.theme-minimal .robot-face[data-state="thinking"] .eye{ animation:mlook 2s ease-in-out infinite; }
+@keyframes mlook{ 0%,100%{translate:0 0;} 50%{translate:12% 0;} }
+body.theme-minimal .robot-face[data-state="speaking"] .mouth{ animation:mtalk .3s ease-in-out infinite; }
+@keyframes mtalk{ 0%,100%{height:5%;} 50%{height:14%;} }
+body.theme-minimal .robot-face[data-state="alert"]{ box-shadow:0 0 0 10px var(--danger); animation:malert 1s infinite; }
+@keyframes malert{ 0%,100%{box-shadow:0 0 0 10px var(--danger);} 50%{box-shadow:0 0 0 16px var(--danger);} }
+body.theme-minimal .robot-face[data-state="alert"] .eye{ height:46%; }
+body.theme-minimal .robot-face[data-state="recover"] .eye{ height:24%; }
+
+body.theme-minimal .robot-face[data-emotion="happy"] .eye{ background:#f7c948; border-radius:0 0 60% 60%; }
+body.theme-minimal .robot-face[data-emotion="sad"] .eye{ background:#8fa6ff; height:24%; }
+body.theme-minimal .robot-face[data-emotion="angry"] .eye{ background:#ff8a6b; height:18%; border-radius:4px; }
+

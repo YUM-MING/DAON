@@ -1,0 +1,28 @@
+# 제출 원본 zip / 문서 원본은 올리지 않음 (실행에 필요한 것만 저장소에 둠)
+*.zip
+*.docx
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+
+# 모듈별 학습 데이터·실험 산출물 (실행에 불필요)
+modules/*/data/raw/
+modules/*/data/emotion/
+modules/*/data/emotion_test/
+modules/*/outputs/
+modules/*/logs/
+modules/vision/weights/*.pt
+!modules/vision/weights/yolov8n-pose.pt
+events.jsonl
+*.log
+
+# 에디터
+.vscode/
+.idea/

@@ -22,7 +22,8 @@ modules/vision/weights/*.pt
 !modules/vision/weights/yolov8n-pose.pt
 events.jsonl
 *.log
-logs/               # 서버 런타임 로그 (eval_log.jsonl, alerts.jsonl)
+# 서버 런타임 로그 (eval_log.jsonl, alerts.jsonl)
+logs/
 
 # 에디터
 .vscode/

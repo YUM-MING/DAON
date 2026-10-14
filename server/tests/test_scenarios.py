@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import tempfile
 
 import pytest
@@ -15,6 +16,8 @@ from server.adapters.dialogue import DialogueAdapter
 from server.core.broker import FakeBroker
 from server.core.context import Context
 from server.core.coordinator import Coordinator
+from server.core.home import HomeStore
+from server.db import DB
 
 
 class Clock:
@@ -32,10 +35,13 @@ class Rig:
         tmp = tempfile.mkdtemp()
         cfg = cfgmod.load(None, mock=True, overrides={"logs": {"dir": tmp}})
         self.clock = Clock()
-        self.ctx = Context(cfg)
+        self.ctx = Context(cfg, home_id=1, home_code="test")
         self.bus = self.ctx.bus
         self.broker = FakeBroker()
-        self.coord = Coordinator(self.ctx, self.broker, clock=self.clock)
+        self.db = DB(os.path.join(tmp, "test.db"))
+        user = self.db.create_user("t@t.t", "pass", "t")
+        self.home = self.db.create_home("집", user["id"])
+        self.coord = Coordinator(self.ctx, self.broker, clock=self.clock, store=HomeStore(self.db, self.home["id"]))
         self.dialogue = DialogueAdapter(self.ctx, clock=self.clock, background=False)
         self.bus.subscribe("mic_mute", self._mute)
         self.muted = False
@@ -185,6 +191,39 @@ def test_eval_log_written(rig: Rig):
     rec = json.loads(lines[-1])
     assert set(rec) >= {"ts", "scenario_id", "pose", "audio", "radar", "fused"}
     assert rec["pose"]["pred"] in ("fall", "no_fall", "uncertain")
+
+
+def test_db_records_alert_and_report(rig: Rig):
+    rig.fall()
+    rig.finish_tts()
+    rig.advance(16, pose="fall", posture="lying")
+    alerts = rig.db.alerts(rig.home["id"])
+    assert alerts and alerts[0]["alert_id"] == "a-001" and alerts[0]["resolved_ts"] is None
+    rig.bus.publish("guardian_resolve", alert_id="a-001", resolution="false_alarm", handled_by="g")
+    rig.step()
+    alerts = rig.db.alerts(rig.home["id"])
+    assert alerts[0]["resolution"] == "false_alarm" and alerts[0]["handled_by"] == "g"
+    rig.bus.publish("emotion", ts=rig.clock(), label="happy", raw="Happiness", confidence=0.9)
+    rep = rig.db.report(rig.home["id"], days=365 * 10)
+    assert rep["emotion_week"] and any(c["data"].get("who") == "robot" for c in rep["conversations"])
+
+
+def test_accounts_homes_pairing():
+    db = DB(os.path.join(tempfile.mkdtemp(), "a.db"))
+    u = db.create_user("A@x.com", "1234", "A")
+    assert db.verify_login("a@x.com", "1234")["id"] == u["id"] and db.verify_login("a@x.com", "no") is None
+    h = db.create_home("A의 집", u["id"])
+    assert len(h["code"]) == 6
+    tok = db.create_session(u["id"])
+    assert db.session_user(tok)["id"] == u["id"]
+    g = db.create_user("g@x.com", "1234", "G")
+    assert not db.is_member(g["id"], h["id"])
+    db.join_home(g["id"], h["code"])
+    assert db.is_member(g["id"], h["id"])
+    r = db.pair_robot(h["code"], "phone")
+    assert db.robot_by_token(r["token"])["home_id"] == h["id"]
+    with pytest.raises(ValueError):
+        db.pair_robot("000000")
 
 
 def test_device_status_and_sleep(rig: Rig):

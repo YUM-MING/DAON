@@ -13,15 +13,18 @@ WEB = ROOT / "web"
 WORKERS = ROOT / "server" / "workers"
 
 DEFAULTS: dict[str, Any] = {
-    "server": {"host": "0.0.0.0", "port": 8000},
+    "server": {"host": "0.0.0.0", "port": 8000, "secure_cookie": False},
     "modules": {
-        "vision": {"mode": "worker", "camera": 0, "fps": 15},
-        "audio": {"mode": "worker", "input_device": None, "stt_model": "base", "stt": True},
-        "radar": {"mode": "off", "port": "", "baud": 256000},
+        "vision": {"mode": "worker", "source": "phone", "fps": 10},
+        "audio": {"mode": "worker", "source": "phone", "input_device": None, "stt_model": "base", "stt": True},
+        "radar": {"mode": "off", "port": "", "baud": 256000, "home_code": None},
         "dialogue": {"mode": "real"},
     },
     "robot": {"sleep_after_absent_sec": 30, "tts_timeout_sec": 12, "wake_to_listen_sec": 2},
-    "logs": {"dir": "logs", "eval_log": "eval_log.jsonl", "alerts": "alerts.jsonl", "scenario_id": "live"},
+    "logs": {"dir": "logs", "eval_log": "eval_log.jsonl", "alerts": "alerts.jsonl", "scenario_id": "live",
+             "db": "daon.db"},
+    "demo": {"email": "demo@daon.local", "password": "daon1234", "name": "개발자", "home_name": "데모 집",
+             "home_code": "123456"},
 }
 
 
@@ -44,4 +47,12 @@ def load(path: str | Path | None = None, *, mock: bool = False, overrides: dict 
     if overrides:
         cfg = _merge(cfg, overrides)
     cfg["logs"]["dir"] = str((ROOT / cfg["logs"]["dir"]).resolve())
+    for m in cfg["modules"].values():                 # YAML 은 off/on/yes/no 를 불리언으로 읽는다 → 문자열로 정규화
+        v = m.get("mode")
+        if v is False or v is None:
+            m["mode"] = "off"
+        elif v is True:
+            m["mode"] = "worker"
+        else:
+            m["mode"] = str(v)
     return cfg

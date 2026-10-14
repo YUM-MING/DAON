@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>실버케어 AI — 보호자 로그인</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/theme-minimal.css">
+<style>
+  .auth-wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .auth-card{ width:100%; max-width:400px; }
+  .auth-card h2{ margin:0 0 6px; }
+  .auth-card p.muted{ font-size:13px; margin-bottom:18px; }
+  .field{ display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+  .field label{ font-size:12px; color:var(--muted,#8a94a6); }
+  .field input{ padding:11px 12px; border-radius:10px; border:1px solid rgba(127,127,127,.35); background:transparent; color:inherit; font-size:15px; }
+  .row-btn{ display:flex; gap:8px; margin-top:6px; }
+  .row-btn .btn{ flex:1; }
+  .link{ background:none; border:none; color:var(--accent,#4f8cff); cursor:pointer; font-size:13px; padding:0; }
+  .err{ color:#ff5c5c; font-size:13px; min-height:18px; margin:4px 0 8px; }
+  .demo-box{ margin-top:16px; padding-top:14px; border-top:1px dashed rgba(127,127,127,.35); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="card auth-card">
+    <h2 id="title">보호자 로그인</h2>
+    <p class="muted">어르신 집 상태를 어디서든 확인합니다. 처음이면 회원가입 후 집 코드가 발급됩니다.</p>
+
+    <div class="field" id="nameField" style="display:none;"><label>이름</label><input id="name" placeholder="홍길동"></div>
+    <div class="field"><label>이메일</label><input id="email" type="email" placeholder="you@example.com" autocomplete="username"></div>
+    <div class="field"><label>비밀번호</label><input id="password" type="password" placeholder="••••" autocomplete="current-password"></div>
+    <div class="err" id="err"></div>
+
+    <div class="row-btn">
+      <button class="btn block" id="submitBtn" onclick="submit()">로그인</button>
+    </div>
+    <p style="margin-top:12px; font-size:13px;">
+      <span id="toggleText">계정이 없으세요?</span>
+      <button class="link" id="toggleBtn" onclick="toggleMode()">회원가입</button>
+    </p>
+
+    <div class="demo-box" id="demoBox" style="display:none;">
+      <div class="muted">시연용 개발자 계정 — 클릭 한 번으로 "데모 집"에 연결되고 개발자 도구가 켜집니다.</div>
+      <button class="btn sm outline block mt8" onclick="demoLogin()">🧪 데모 계정으로 로그인</button>
+      <div class="muted mt8" id="demoInfo"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/common.js"></script>
+<script>
+  const params = new URLSearchParams(location.search);
+  const next = params.get("next") || "guardian-dashboard.html";
+  let mode = "login";
+
+  function toggleMode(){
+    mode = mode === "login" ? "signup" : "login";
+    document.getElementById("title").textContent = mode === "login" ? "보호자 로그인" : "보호자 회원가입";
+    document.getElementById("submitBtn").textContent = mode === "login" ? "로그인" : "회원가입";
+    document.getElementById("toggleText").textContent = mode === "login" ? "계정이 없으세요?" : "이미 계정이 있으세요?";
+    document.getElementById("toggleBtn").textContent = mode === "login" ? "회원가입" : "로그인";
+    document.getElementById("nameField").style.display = mode === "login" ? "none" : "flex";
+    document.getElementById("err").textContent = "";
+  }
+
+  async function post(url, body){
+    const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{}) });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error || ("오류 " + r.status));
+    return j;
+  }
+
+  async function submit(){
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const name = document.getElementById("name").value.trim();
+    const err = document.getElementById("err"); err.textContent = "";
+    try{
+      const me = await post(mode === "login" ? "/api/auth/login" : "/api/auth/signup", { email, password, name });
+      if(me.homes && me.homes.length) localStorage.setItem("daon_home_id", me.homes[0].id);
+      localStorage.setItem("sc_mode", "guardian");
+      location.href = next;
+    }catch(e){ err.textContent = e.message; }
+  }
+
+  async function demoLogin(){
+    try{
+      const me = await post("/api/auth/demo");
+      if(me.homes && me.homes.length) localStorage.setItem("daon_home_id", me.homes[0].id);
+      localStorage.setItem("sc_mode", "guardian");
+      location.href = next;
+    }catch(e){ document.getElementById("err").textContent = e.message; }
+  }
+
+  document.getElementById("password").addEventListener("keydown", e => { if(e.key === "Enter") submit(); });
+  fetch("/api/demo").then(r => r.json()).then(d => {
+    if(d && d.email){
+      document.getElementById("demoBox").style.display = "block";
+      document.getElementById("demoInfo").textContent = `계정 ${d.email} · 집 코드 ${d.home_code} (로봇 폰에서 이 코드를 입력)`;
+    }
+  }).catch(()=>{});
+  if(params.get("signup") === "1") toggleMode();
+</script>
+</body>
+</html>

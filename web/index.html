@@ -84,8 +84,8 @@
   } else {
     document.getElementById("firstRun").style.display = "none";
     if(!forceSetup){
-      if(savedMode === "user") location.href = "user-face.html";
-      if(savedMode === "guardian") location.href = "guardian-dashboard.html";
+      if(savedMode === "user") location.href = localStorage.getItem("daon_robot_token") ? "user-face.html" : "pair.html";
+      if(savedMode === "guardian") location.href = "guardian-dashboard.html";   // 로그인 안 돼 있으면 auth.html 로 이동
     } else {
       toast("모드를 다시 선택해주세요");
     }
@@ -99,7 +99,9 @@
 
   function selectMode(mode){
     localStorage.setItem("sc_mode", mode);
-    location.href = mode === "user" ? "user-face.html" : "guardian-dashboard.html";
+    // 통합 서버 연결: 사용자용은 집 코드 페어링(pair.html), 보호자용은 로그인(auth.html) 을 거친다
+    if(mode === "user") location.href = localStorage.getItem("daon_robot_token") ? "user-face.html" : "pair.html";
+    else location.href = "guardian-dashboard.html";
   }
 </script>
 </body>

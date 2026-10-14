@@ -30,9 +30,12 @@ GUARDIAN_RESOLVE_TEXT = {
 
 
 class Coordinator:
-    def __init__(self, ctx, broker, clock: Callable[[], float] = time.time) -> None:
-        self.ctx, self.broker, self.clock = ctx, broker, clock
+    def __init__(self, ctx, broker, clock: Callable[[], float] = time.time, store=None) -> None:
+        self.ctx, self.broker, self.clock, self.store = ctx, broker, clock, store
         self.cfg = ctx.config
+        # 폰 스트림 수신 시각 (카메라/마이크가 폰에서 올 때 기기 상태 판단용)
+        self._last_frame_at: float | None = None
+        self._last_pcm_at: float | None = None
         bus = ctx.bus
         # 로봇 얼굴 상태
         self.ui_state, self.emotion, self.text, self.countdown = "sleep", "neutral", "", None
@@ -71,6 +74,21 @@ class Coordinator:
     def _initial_dev(self, module: str) -> str:
         m = self.ctx.mode(module)
         return {"off": "off", "mock": "mock"}.get(m, "starting")
+
+    def _phone_source(self, module: str) -> bool:
+        return self.ctx.mode(module) == "worker" and str(self.cfg["modules"][module].get("source", "phone")) == "phone"
+
+    def note_stream(self, kind: str) -> None:
+        """폰에서 카메라 프레임('camera') / 마이크 PCM('mic') 이 도착했을 때 서버가 호출."""
+        now = self.clock()
+        if kind == "camera":
+            self._last_frame_at = now
+        else:
+            self._last_pcm_at = now
+
+    def _record(self, type: str, data: dict | None = None, ts: float | None = None) -> None:
+        if self.store is not None:
+            self.store.record(type, data, ts)
 
     # ---------------- 로봇 얼굴 ----------------
     def _push_state(self, speak: bool = False) -> None:
@@ -119,7 +137,7 @@ class Coordinator:
             self.fall_episode_start = None
         self.pose = {"pred": ev.pred, "conf": float(ev.conf)}
         self._last_pose_at = self.clock()
-        if self.device["camera"] in ("starting", "stale"):
+        if not self._phone_source("vision") and self.device["camera"] in ("starting", "stale"):
             self.device["camera"] = "ok"
         self._write_eval(ev.ts)
 
@@ -139,15 +157,17 @@ class Coordinator:
         if label != self.emotion:
             self.emotion = label
             self._push_state()
+            self._record("emotion", {"label": label, "confidence": ev.get("confidence")}, ev.ts)
 
     def on_audio_fall(self, ev) -> None:
         self.audio_fall_at, self.audio_fall_conf = ev.ts, float(ev.get("confidence", 0.0))
-        if self.device["mic"] in ("starting",):
+        if not self._phone_source("audio") and self.device["mic"] in ("starting",):
             self.device["mic"] = "ok"
 
     def on_speech(self, ev) -> None:
-        if self.device["mic"] in ("starting",):
+        if not self._phone_source("audio") and self.device["mic"] in ("starting",):
             self.device["mic"] = "ok"
+        self._record("dialogue", {"who": "user", "text": ev.text}, ev.ts)
         if self.ui_state in ("sleep", "wake", "listening") and not self.speaking:
             self._set_state("thinking", "")
             self._thinking_until = self.clock() + 3.0
@@ -164,6 +184,8 @@ class Coordinator:
         self._push_device()
 
     def on_client(self, ev) -> None:
+        if ev.get("role") == "robot" and ev.get("connected"):
+            self._push_state()            # 막 접속한 폰에 현재 얼굴 상태를 바로 보여 준다
         self._push_device()
 
     # ---------------- 대화 모듈 출력 ----------------
@@ -176,6 +198,7 @@ class Coordinator:
         self._update_fused(d)
         strategy, text = d.get("strategy"), d.get("response_text")
         if text:
+            self._record("dialogue", {"who": "robot", "text": text, "strategy": strategy, "state": d.get("state")}, ev.ts)
             if strategy in SAFETY_ASK:
                 self._speak("alert", text, d.get("response_deadline_sec"))
             elif strategy == "ESCALATE":
@@ -209,19 +232,25 @@ class Coordinator:
             if status == "raised" or self.current_alert_id is None:
                 self._alert_counter += 1
                 self.current_alert_id = f"a-{self._alert_counter:03d}"
+            sensors, fused = self._sensor_labels(now), dict(self.fused)
             self.broker.send_guardian({
                 "type": "alert_created", "alert_id": self.current_alert_id, "ts": now,
                 "status": status, "seq": m.get("seq"), "cause": m.get("cause"),
-                "title": m.get("title"), "body": m.get("body"),
-                "sensors": self._sensor_labels(now), "fused": dict(self.fused),
+                "title": m.get("title"), "body": m.get("body"), "sensors": sensors, "fused": fused,
             })
+            if self.store is not None:
+                self.store.alert_created(self.current_alert_id, now, m.get("cause", ""), m.get("title", ""), sensors, fused)
+            self._record("alert", {"alert_id": self.current_alert_id, "status": status, "cause": m.get("cause")}, now)
         elif kind == "resolved" and self.current_alert_id:
             self.broker.send_guardian({"type": "alert_resolved", "alert_id": self.current_alert_id,
                                        "resolution": "elder_ok", "handled_by": "robot", "ts": now,
                                        "title": m.get("title"), "body": m.get("body")})
+            if self.store is not None:
+                self.store.alert_resolved(self.current_alert_id, now, "elder_ok", "robot")
             self.current_alert_id = None
         elif kind == "notice":
             self.broker.send_guardian({"type": "notice", "ts": now, "title": m.get("title"), "body": m.get("body")})
+            self._record("notice", {"title": m.get("title"), "body": m.get("body")}, now)
 
     def on_guardian_resolve(self, ev) -> None:
         alert_id = ev.get("alert_id") or self.current_alert_id
@@ -230,6 +259,8 @@ class Coordinator:
         resolution, who = ev.get("resolution", "guardian_confirmed"), ev.get("handled_by", "guardian_1")
         self.broker.send_guardian({"type": "alert_resolved", "alert_id": alert_id, "resolution": resolution,
                                    "handled_by": who, "ts": self.clock()})
+        if self.store is not None:
+            self.store.alert_resolved(alert_id, self.clock(), resolution, who)
         if alert_id == self.current_alert_id:
             self.current_alert_id = None
         self.ctx.bus.publish("alert_cleared", alert_id=alert_id, reason=resolution)
@@ -260,11 +291,32 @@ class Coordinator:
         if (self._absent_since is not None and self.ui_state in ("listening", "wake")
                 and now - self._absent_since >= self.cfg["robot"]["sleep_after_absent_sec"]):
             self._set_state("sleep", "")
-        if self._last_pose_at and self.device["camera"] == "ok" and now - self._last_pose_at > 5:
+        changed = self._refresh_stream_devices(now)
+        if (not self._phone_source("vision") and self._last_pose_at and self.device["camera"] == "ok"
+                and now - self._last_pose_at > 5):
             self.device["camera"] = "stale"
+            changed = True
+        if changed or now - self._last_device_push >= 5:
             self._push_device()
-        if now - self._last_device_push >= 5:
-            self._push_device()
+
+    def _refresh_stream_devices(self, now: float) -> bool:
+        """카메라/마이크가 폰 스트림일 때: 최근 3초 안에 데이터가 왔으면 ok, 폰이 없으면 off, 끊기면 stale."""
+        changed = False
+        for module, key, last in (("vision", "camera", self._last_frame_at), ("audio", "mic", self._last_pcm_at)):
+            if not self._phone_source(module):
+                continue
+            if not self.broker.robot_online:
+                st = "off"
+            elif last is None:
+                st = "starting"
+            elif now - last <= 3.0:
+                st = "ok"
+            else:
+                st = "stale"
+            if self.device[key] != st:
+                self.device[key] = st
+                changed = True
+        return changed
 
     # ---------------- 기기 상태 / 평가 로그 ----------------
     def _push_device(self) -> None:

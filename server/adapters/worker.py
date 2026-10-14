@@ -1,13 +1,13 @@
 """워커 프로세스 어댑터: 모듈을 별도 파이썬 프로세스로 띄우고 JSON lines로 주고받는다.
 
 왜 프로세스 분리인가
-- 비전(cv2)과 음성(faster-whisper의 av)이 서로 다른 libavdevice를 싣고 있어 한 프로세스에서 충돌 경고가 난다.
+- 비전(cv2)과 음성(faster-whisper의 av)이 서로 다른 libavdevice 를 실어 한 프로세스에서 충돌 경고가 난다.
 - 각 모듈은 자기 루트에서 실행된다고 가정한다(상대경로 ./weights, ./checkpoints) → 워커가 cwd를 맞춘다.
 - 모듈 하나가 죽어도 서버는 살아 있고, 워커는 자동 재시작된다.
 
-프로토콜
-    워커 stdout : 한 줄에 JSON 하나 {"type": ..., "ts": ..., ...} → 내부 버스에 그대로 발행
-    워커 stdin  : 한 줄에 JSON 명령 하나 {"cmd": ...}
+워커는 서버 전체에 하나(공유)이고 여러 집(home)을 동시에 처리한다.
+    워커 stdout : {"type": ..., "ts": ..., "home": <home_id>, ...}  → 해당 집의 버스로 발행
+    워커 stdin  : {"cmd": ..., "home": <home_id>, ...}
     워커 stderr : 로그 (서버 stderr로 그대로 흘림)
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 log = logging.getLogger("daon.worker")
 
@@ -26,12 +27,14 @@ log = logging.getLogger("daon.worker")
 class WorkerAdapter:
     restart_delay = 3.0
 
-    def __init__(self, ctx, name: str, script: Path, cwd: Path, args: list[str] | None = None) -> None:
-        self.ctx, self.name, self.script, self.cwd, self.args = ctx, name, script, cwd, args or []
+    def __init__(self, bus_for: Callable, name: str, script: Path, cwd: Path, args: list[str] | None = None) -> None:
+        """bus_for(home_id | None) → 그 집의 Bus (없으면 None)."""
+        self.bus_for, self.name, self.script, self.cwd, self.args = bus_for, name, script, cwd, args or []
         self.proc: subprocess.Popen | None = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self.restarts = 0
+        self.last_event_at: float | None = None
 
     # ---------------- 수명주기 ----------------
     def start(self) -> "WorkerAdapter":
@@ -45,6 +48,9 @@ class WorkerAdapter:
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
+
+    def attach_home(self, runtime) -> None:
+        """집 런타임이 만들어질 때 호출: 그 집의 버스 이벤트 → 워커 명령 연결 (서브클래스가 구현)."""
 
     def _spawn(self) -> None:
         cmd = [sys.executable, "-u", str(self.script), *self.args]
@@ -73,7 +79,6 @@ class WorkerAdapter:
             code = self.proc.returncode if self.proc else None
             self.restarts += 1
             log.warning("[%s] exited (code=%s) → %.0f초 후 재시작 (%d회)", self.name, code, self.restart_delay, self.restarts)
-            self.ctx.bus.publish("worker_exit", worker=self.name, code=code)
             time.sleep(self.restart_delay)
 
     def _read_loop(self) -> None:
@@ -91,7 +96,13 @@ class WorkerAdapter:
             if not t:
                 continue
             ts = obj.pop("ts", None)
-            self.ctx.bus.publish(t, ts=ts, **obj)
+            home = obj.pop("home", None)
+            self.last_event_at = time.time()
+            bus = self.bus_for(home)
+            if bus is not None:
+                bus.publish(t, ts=ts, **obj)
+            else:
+                log.debug("[%s] no home for event %s (home=%s)", self.name, t, home)
 
     # ---------------- 명령 ----------------
     def send(self, cmd: dict) -> None:

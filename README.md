@@ -13,7 +13,7 @@ DAON/
 │   ├── audio_ai/    # 음성 (한정연) — 환경음 분류 + STT
 │   └── dialogue/    # 대화·융합·알림 (채혜원)
 ├── web/             # 웹앱 (김유진) — 로봇 얼굴 + 보호자 대시보드
-├── server/          # 통합 서버 (FastAPI + WebSocket 브로커 + 모듈 어댑터/워커 + mock)
+├── server/          # 통합 서버 (FastAPI, 계정/집 코드, WebSocket 브로커, 모듈 어댑터/워커, 개발자 도구)
 ├── config.yaml      # 카메라/마이크/레이더 포트, 모듈 on/off
 ├── run.sh           # 한 번에 기동
 └── TEAM_INTEGRATION_GUIDE.md
@@ -35,10 +35,14 @@ DAON/
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-./run.sh --mock     # 센서 없이 가짜 이벤트 + 실물 대화 모듈 → http://localhost:8000/
-./run.sh            # config.yaml 대로 실제 카메라/마이크 워커 기동
-python -m pytest server/tests -q   # 시나리오 테스트
+brew install cloudflared              # 공개 주소용 (Windows: winget install Cloudflare.cloudflared)
+./run.sh --tunnel   # 서버 + https 공개 주소 → 폰(사용자용)·보호자(어디서든) 접속
+./run.sh            # 로컬만 http://localhost:8000
+./run.sh --mock     # 센서 워커 없이 가짜 이벤트 + 실물 대화 모듈
+python -m pytest server/tests -q   # 시나리오·계정 테스트
 ```
+- 폰: 공개 주소 → 사용자용 → **집 코드** 입력 → 얼굴 화면 (카메라·마이크는 폰이 켜서 서버로 보냄)
+- 보호자: 공개 주소 → 보호자용 → 회원가입/로그인. 시연은 **데모 계정 `demo@daon.local / daon1234`, 집 코드 `123456`**
 진행 상황·모듈별 수정 요청·확인 목록은 [INTEGRATION_STATUS.md](INTEGRATION_STATUS.md).
 
 ## 모듈 단독 실행

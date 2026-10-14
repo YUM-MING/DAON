@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>실버케어 AI — 로봇 연결</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/theme-minimal.css">
+<style>
+  .pair-wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .pair-card{ width:100%; max-width:420px; text-align:center; }
+  .code-input{ font-size:34px; letter-spacing:12px; text-align:center; width:100%; padding:12px; border-radius:12px;
+               border:1px solid rgba(127,127,127,.35); background:transparent; color:inherit; margin:14px 0; }
+  .err{ color:#ff5c5c; font-size:13px; min-height:18px; }
+  .hint{ font-size:13px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="pair-wrap">
+  <div class="card pair-card">
+    <h2>🤖 로봇 연결</h2>
+    <p class="muted hint">보호자 대시보드 상단에 표시된 <b>6자리 집 코드</b>를 입력하면<br>이 기기가 그 집의 로봇 얼굴이 됩니다.</p>
+    <input class="code-input" id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    <div class="err" id="err"></div>
+    <button class="btn block" onclick="pair()">연결하기</button>
+    <p class="muted hint mt16" id="demoHint"></p>
+    <p class="mt16"><a class="btn sm ghost" href="index.html?setup=1">← 모드 선택으로</a></p>
+  </div>
+</div>
+<script src="js/common.js"></script>
+<script>
+  async function pair(){
+    const code = document.getElementById("code").value.trim();
+    const err = document.getElementById("err"); err.textContent = "";
+    if(code.length !== 6){ err.textContent = "6자리 코드를 입력하세요"; return; }
+    try{
+      const r = await fetch("/api/pair", { method:"POST", headers:{"Content-Type":"application/json"},
+                                           body: JSON.stringify({ code, name: navigator.userAgent.slice(0, 40) }) });
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.error || "연결 실패");
+      localStorage.setItem("daon_robot_token", j.token);
+      localStorage.setItem("daon_home_name", j.home.name);
+      localStorage.setItem("sc_mode", "user");
+      toast(`"${j.home.name}" 에 연결되었습니다`);
+      setTimeout(() => location.href = "user-face.html", 600);
+    }catch(e){ err.textContent = e.message; }
+  }
+  document.getElementById("code").addEventListener("keydown", e => { if(e.key === "Enter") pair(); });
+  fetch("/api/demo").then(r => r.json()).then(d => {
+    if(d && d.home_code) document.getElementById("demoHint").textContent = `시연용 데모 집 코드: ${d.home_code}`;
+  }).catch(()=>{});
+</script>
+</body>
+</html>

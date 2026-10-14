@@ -3,27 +3,36 @@
    기존 user-face.js / guardian.js 의 함수(setState, setEmotion, addEventRow …)를
    그대로 호출해서 화면을 바꾼다. UI 코드는 손대지 않는다.
 
-   규약: TEAM_INTEGRATION_GUIDE.md 3절 + server/core/broker.py 주석
-   - 로봇 페이지   : state 메시지 수신 → setState/setEmotion/카운트다운, speak=true 면 브라우저 TTS 재생 후 tts_done 회신
-   - 보호자 페이지 : alert_created / alert_resolved / device_status / robot_state / notice
-   - 서버 없이 html 만 열면(file://) 아무것도 하지 않고 기존 데모 동작 유지
+   - 로봇 페이지   : localStorage 의 로봇 토큰으로 /ws/robot?token= 접속.
+                    state 메시지 → setState/setEmotion/카운트다운, speak=true 면 브라우저 TTS 재생 후 tts_done 회신.
+                    카메라/마이크 스트림은 robot-sensors.js 가 DaonWS.sendBinary 로 보낸다.
+   - 보호자 페이지 : 세션 쿠키 + /ws/guardian?home=ID. 로그인 안 돼 있으면 auth.html 로.
+                    alert_created / alert_resolved / device_status / robot_state / notice 처리.
+   - 서버 없이 html 만 열면(file://) 아무것도 하지 않고 기존 데모 동작 유지.
 ========================================================= */
 (function(){
   if(location.protocol === "file:") return;
   const isRobot = !!document.getElementById("face");
   const isGuardian = !!document.getElementById("emergencyOverlay");
   if(!isRobot && !isGuardian) return;
-  const role = isRobot ? "robot" : "guardian";
-  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/" + role;
+  const WS_BASE = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
 
-  let ws = null, retry = 1000;
+  let ws = null, retry = 1000, wsUrl = null, stopped = false;
   function send(obj){ if(ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+  function sendBinary(buf){ if(ws && ws.readyState === 1 && ws.bufferedAmount < 2_000_000) ws.send(buf); }
+  function connected(){ return !!(ws && ws.readyState === 1); }
   function connect(){
-    ws = new WebSocket(url);
-    ws.onopen = () => { retry = 1000; send({type:"hello", role, info:{ua:navigator.userAgent}}); onConn(true); };
-    ws.onclose = () => { onConn(false); setTimeout(connect, retry); retry = Math.min(retry*2, 10000); };
-    ws.onerror = () => ws.close();
-    ws.onmessage = (e) => { let m; try{ m = JSON.parse(e.data); }catch{ return; } (isRobot ? onRobot : onGuardian)(m); };
+    if(stopped || !wsUrl) return;
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => { retry = 1000; send({type:"hello", role: isRobot ? "robot" : "guardian", info:{ua:navigator.userAgent}}); onConn(true); };
+    ws.onclose = (e) => {
+      onConn(false);
+      if(e.code === 4401){ stopped = true; onUnauthorized(); return; }
+      setTimeout(connect, retry); retry = Math.min(retry*2, 10000);
+    };
+    ws.onerror = () => { try{ ws.close(); }catch{} };
+    ws.onmessage = (e) => { if(typeof e.data !== "string") return; let m; try{ m = JSON.parse(e.data); }catch{ return; } (isRobot ? onRobot : onGuardian)(m); };
   }
   function onConn(ok){
     if(isGuardian){
@@ -31,8 +40,13 @@
       if(b){ b.textContent = ok ? "실시간 연결됨" : "서버 연결 끊김"; b.className = "badge dot " + (ok ? "ok" : "danger"); }
     }
     if(isRobot && typeof log === "function") log(ok ? "서버 연결됨" : "서버 연결 끊김 (재시도 중)");
+    document.dispatchEvent(new CustomEvent("daon:conn", { detail:{ ok } }));
   }
-  window.DaonWS = { send };
+  function onUnauthorized(){
+    if(isRobot){ localStorage.removeItem("daon_robot_token"); location.href = "pair.html"; }
+    else location.href = "auth.html?next=guardian-dashboard.html";
+  }
+  window.DaonWS = { send, sendBinary, connected };
 
   /* ============================ 로봇 얼굴 ============================ */
   const UI_EMOTION = { neutral:"neutral", happy:"happy", sad:"sad", angry:"angry", surprised:"neutral", fear:"sad" };
@@ -56,7 +70,8 @@
   }
 
   function speak(text, utteranceId){
-    const done = (ok) => send({type:"tts_done", utterance_id: utteranceId, ok});
+    const done = (ok) => { send({type:"tts_done", utterance_id: utteranceId, ok}); document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:false}})); };
+    document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:true}}));
     if(!("speechSynthesis" in window)){ setTimeout(() => done(false), Math.max(1500, text.length*120)); return; }
     try{
       speechSynthesis.cancel();
@@ -81,9 +96,7 @@
     if(m.state !== curState || (text && text !== curText)){
       curState = m.state; curText = text;
       if(typeof setState === "function") setState(m.state, text ? {text} : {});
-      if(m.state === "speaking" || m.state === "alert" || m.state === "recover"){
-        if(typeof setContext === "function" && m.state === "speaking") setContext("robotTalking");
-      }
+      if(typeof setContext === "function" && m.state === "speaking") setContext("robotTalking");
     }
     if(m.state === "alert") showCountdown(m.countdown); else showCountdown(null);
     if(m.speak && text) speak(text, m.utterance_id);
@@ -93,9 +106,10 @@
   const EMO_KO = { neutral:"중립 😐", happy:"기쁨 😊", sad:"슬픔 😢", angry:"화남 😠", surprised:"놀람 😮" };
   const RES_KO = { elder_ok:"어르신 응답 (오탐 해제)", false_alarm:"오탐 처리", guardian_confirmed:"확인 완료",
                    called_119:"119 연결", timeout:"시간 초과" };
-  const DEV_KO = { ok:"정상", mock:"모의", off:"미연결", error:"오류", stale:"끊김", starting:"시작 중" };
+  const DEV_KO = { ok:"정상", mock:"모의", off:"미연결", error:"오류", stale:"끊김", starting:"시작 중", worker_ready:"대기" };
   let activeAlertId = null;
   const t = (ts) => new Date((ts||Date.now()/1000)*1000).toLocaleTimeString("ko-KR",{hour12:false});
+  window.DaonFmt = { t, RES_KO, EMO_KO };
 
   function badge(el, status){
     if(!el) return;
@@ -135,7 +149,7 @@
         const rows = document.querySelectorAll("#tab-home table tr");
         // 행 순서: 로봇 폰 / 레이더 / 카메라 / 마이크 / Wi-Fi  (guardian-dashboard.html)
         const map = [["robot", m.robot_online ? "ok" : "off"], ["radar", m.radar], ["camera", m.camera], ["mic", m.mic], ["wifi", m.wifi]];
-        map.forEach(([k, st], i) => { const r = rows[i]; if(r){ badge(r.querySelector(".badge"), st === "unknown" ? "off" : st); } });
+        map.forEach(([, st], i) => { const r = rows[i]; if(r){ badge(r.querySelector(".badge"), st === "unknown" ? "off" : st); } });
         if(rows[0] && m.battery != null){ const c = rows[0].querySelectorAll("td")[2]; if(c) c.textContent = "배터리 " + m.battery + "%"; }
         const warn = [m.radar, m.camera, m.mic].some(s => s === "error" || s === "stale");
         const banner = document.getElementById("connWarnBanner"); if(banner) banner.classList.toggle("hidden", !warn);
@@ -154,11 +168,22 @@
     }
   }
 
+  /* ============================ 시작 ============================ */
+  if(isRobot){
+    const token = localStorage.getItem("daon_robot_token");
+    if(!token){ location.href = "pair.html"; return; }
+    wsUrl = WS_BASE + "/ws/robot?token=" + encodeURIComponent(token);
+    window.DaonReady = fetch("/api/robot/me?token=" + encodeURIComponent(token)).then(r => {
+      if(r.status === 401){ onUnauthorized(); throw new Error("unauthorized"); }
+      return r.json();
+    }).then(info => { window.DaonRobot = info; connect(); return info; });
+  }
+
   if(isGuardian){
     // guardian.js 의 버튼 핸들러를 감싸서 서버로도 보낸다 (함수 선언은 전역이라 재할당 가능)
     const origResolve = window.resolveAlert, origSend = window.sendMsgToRobot;
     window.resolveAlert = function(resolution){
-      send({type:"alert_resolve", alert_id: activeAlertId, resolution, handled_by:"guardian_1"});
+      send({type:"alert_resolve", alert_id: activeAlertId, resolution});
       if(origResolve) origResolve(resolution);
     };
     window.sendMsgToRobot = function(){
@@ -168,14 +193,29 @@
       if(origSend) origSend();
     };
     const btn119 = document.getElementById("btnCall119");
-    if(btn119) btn119.addEventListener("click", () => send({type:"alert_resolve", alert_id: activeAlertId, resolution:"called_119", handled_by:"guardian_1"}));
+    if(btn119) btn119.addEventListener("click", () => send({type:"alert_resolve", alert_id: activeAlertId, resolution:"called_119"}));
+
+    window.DaonReady = fetch("/api/me").then(r => {
+      if(r.status === 401){ onUnauthorized(); throw new Error("unauthorized"); }
+      return r.json();
+    }).then(me => {
+      const saved = parseInt(localStorage.getItem("daon_home_id") || "0", 10);
+      const home = me.homes.find(h => h.id === saved) || me.homes[0];
+      if(!home){ throw new Error("no home"); }
+      localStorage.setItem("daon_home_id", home.id);
+      window.DaonMe = me; window.DaonHome = home;
+      wsUrl = WS_BASE + "/ws/guardian?home=" + home.id;
+      connect();
+      return { me, home };
+    });
 
     // 분석 탭: 서버 평가 로그(jsonl)로 타임라인·정확도 그래프를 그린다 (실패하면 기존 목업)
     const origInit = window.initAnalysisCharts;
     window.initAnalysisCharts = async function(){
       try{
+        const hid = window.DaonHome ? window.DaonHome.id : 0;
         const [log, summary] = await Promise.all([
-          fetch("/api/eval_log?limit=600").then(r => r.json()),
+          fetch(`/api/homes/${hid}/eval_log?limit=600`).then(r => r.json()),
           fetch("/api/eval_summary").then(r => r.json()),
         ]);
         if(!Array.isArray(log) || log.length < 2) throw new Error("no log");
@@ -204,8 +244,7 @@
       }catch(e){
         if(origInit) origInit();
       }
+      document.dispatchEvent(new CustomEvent("daon:analysis"));
     };
   }
-
-  connect();
 })();

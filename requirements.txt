@@ -5,7 +5,8 @@
 #   py -3.12 -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
 #
 # GPU (CUDA) build of torch on Windows, if you have an NVIDIA GPU:
-#   pip install torch==2.14.0 torchvision==0.29.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+#   pip install --force-reinstall --no-deps torch==2.14.0 torchvision==0.29.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu126
+#   (cu128 index has no 2.14.0 wheel; --force-reinstall is needed because pip treats the installed +cpu build as already satisfying ==2.14.0)
 
 # ---- vision (modules/vision) ----
 ultralytics==8.4.164

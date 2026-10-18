@@ -1,0 +1,94 @@
+{
+  "version": "0.2",
+  "updated": "2026-10-19",
+  "envelope": {
+    "required": ["type", "ts"],
+    "ts": "unix epoch seconds (float)",
+    "pred": ["fall", "no_fall", "uncertain"],
+    "conf": "0..1 float"
+  },
+  "events": {
+    "pose_pred": {
+      "interval_sec": 0.5,
+      "detail": {
+        "present": "bool",
+        "posture": ["standing", "sitting", "lying", "unknown"],
+        "visibility": ["full", "upper", "head", "none"],
+        "distance": ["near", "mid", "far", "unknown"],
+        "motion": ["moving", "still", "unknown"],
+        "person_conf": "0..1",
+        "fall_state": ["monitoring", "fallen", "alerted"]
+      }
+    },
+    "fall_detected": {"fields": ["conf"]},
+    "fall_recovered": {"fields": []},
+    "fall_alert": {"fields": ["elapsed_sec"]},
+    "motion_pred": {
+      "interval_sec": 0.5,
+      "detail": {
+        "motion": ["moving", "still", "none"],
+        "source": ["radar", "vision"],
+        "distance_cm": "float|null"
+      }
+    },
+    "expression_debug": {
+      "detail": {
+        "raw": ["happy", "neutral", "sad", "angry", "anxious", "surprised", "hurt"],
+        "scores": "dict label->0..1",
+        "face_px": "int",
+        "aligned": "bool"
+      }
+    },
+    "mood_pred": {
+      "interval_sec": 1.0,
+      "pred": ["happy", "calm", "sad", "anxious", "angry", "surprised", "tired", "unknown"],
+      "detail": {
+        "intensity": ["low", "mid", "high"],
+        "stability": "0..1",
+        "baseline_delta": "0..1|null",
+        "face_px": "int",
+        "top_expression": ["happy", "neutral", "sad", "angry", "anxious", "surprised", "hurt"]
+      },
+      "negative_gate": {"ratio_min": 0.5, "conf_min": 0.6, "sustain_sec": 3.0, "window_sec": 30, "baseline_excess_min": 0.25},
+      "hurt_counts_as_sad_only_if_conf_ge": 0.7,
+      "surprised_gate": {"window_sec": 5, "min_samples": 3, "ratio_min": 0.5, "conf_min": 0.6},
+      "tired_rule": {"eye_closed_ratio_min": 0.3, "head_droop_delta_min": 0.25, "sustain_sec": 10}
+    },
+    "mood_changed": {"same_as": "mood_pred"},
+    "audio_pred": {
+      "interval_sec": 0.5,
+      "detail": {
+        "label": ["speech", "impact", "ambient", "silence"],
+        "p_speech": "0..1", "p_impact": "0..1", "p_ambient": "0..1",
+        "rms_dbfs": "float"
+      }
+    },
+    "speech": {"fields": ["text", "duration"], "detail": {"stt_model": "str", "lang_ratio": "0..1"}},
+    "voice_unclear": {"fields": ["duration"]}
+  },
+  "expression_to_mood": {
+    "happy": "happy", "neutral": "calm", "sad": "sad", "hurt": "sad",
+    "angry": "angry", "anxious": "anxious", "surprised": "surprised"
+  },
+  "dialogue_input": {
+    "pose": {"values": ["normal", "lying", "sleeping", "fall"],
+             "from_pose_pred": {"fall": "fall", "lying": "lying", "standing": "normal", "sitting": "normal", "unknown": null, "uncertain": null}},
+    "emotion": {"values": ["neutral", "happy", "sad", "angry", "fear"],
+                "from_mood": {"happy": "happy", "calm": "neutral", "sad": "sad", "anxious": "fear", "angry": "angry",
+                              "surprised": "neutral", "tired": "neutral", "unknown": null}},
+    "sound_event": {"values": ["none", "speech", "fall_sound", "daily", "voice_unclear"],
+                    "from_audio_label": {"impact": "fall_sound", "speech": "speech", "ambient": "daily", "silence": "none"}},
+    "motion": {"values": ["moving", "still", "none"]}
+  },
+  "web": {
+    "state": ["sleep", "wake", "listening", "thinking", "speaking", "alert", "recover"],
+    "emotion": ["happy", "calm", "sad", "anxious", "angry", "surprised", "tired", "unknown"],
+    "mirror_face": ["happy", "calm", "surprised"],
+    "badge_only": ["sad", "anxious", "angry", "tired"]
+  },
+  "eval_log": {
+    "fields": ["ts", "scenario_id", "ground_truth", "pose", "audio", "motion", "mood", "fused"],
+    "ground_truth": ["fall", "no_fall"],
+    "scenario_id_pattern": "<kind>-<detail>-<nn>"
+  }
+}

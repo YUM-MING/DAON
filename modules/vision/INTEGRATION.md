@@ -13,11 +13,11 @@
 를 수행하고, 결과를 **JSON 이벤트**로 내보낸다. 센서 융합(레이더·소리)은 이
 모듈 밖(혜원 파트)에서 `pose_pred` 스트림을 받아 수행한다.
 
-## 2. 설치 및 실행 (Windows / Mac 공통)
+## 2. 설치 및 실행 (Windows)
 
 ```bash
 python -m venv .venv
-# Windows: .venv\Scripts\activate / Mac: source .venv/bin/activate
+.venv\Scripts\activate
 pip install -r requirements.txt
 
 python inference.py                     # 웹캠 실시간 (종료: q)
@@ -124,3 +124,12 @@ vision.fall.notify_response()   # 긴급 알림 카운트다운 취소 + fall_re
 낙상 임계값(하강 속도, 종횡비, 지속시간)과 알림 타임아웃(기본 10초)은 전부
 `src/config.py`에 모여 있음. **로봇 카메라 높이/각도 확정 후 실측 튜닝 필요** —
 UI의 10초 카운트다운과 `alert_timeout_sec`를 맞출 것.
+
+
+## 8. 2026-10-18 추가 (통합 중 보강)
+
+- `src/config.py phone_config()` — 로봇 폰 전면 카메라(근거리) 프로파일. 통합 서버가 `source: phone` 이면 자동 사용.
+  `FallConfig.require_lower_body_for_lying=True`: 엉덩이+무릎/발목 키포인트가 안 보이면 posture="unknown" (상반신만 보일 때 '누움' 오판 방지).
+- `FallDetector.motion_state(now)` → `"moving" | "still" | None`. 키포인트 이동량 기반 움직임 유무. 레이더가 없을 때 융합의 `motion` 입력으로 쓴다.
+- `FallDetector.lower_body_visible(pose)`.
+- 통합 서버 워커(`server/workers/vision_worker.py`)는 포즈 추적기를 공유하고 집마다 FallDetector/EmotionRecognizer 를 둔다. 디버그 모드에서 1초마다 판정 근거(속도·종횡비·각도)를 내보내고 낙상 순간 프레임을 저장한다.

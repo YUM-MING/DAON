@@ -1,6 +1,6 @@
 """레이더 워커: HLK-LD2410B (UART 256000bps) 기본 보고 프레임을 읽어 motion 이벤트를 내보낸다.
 
-    python server/workers/radar_worker.py --port /dev/tty.usbserial-0001 --baud 256000
+    python server/workers/radar_worker.py --port COM3 --baud 256000
 
 LD2410B 기본 모드 데이터 프레임
     F4 F3 F2 F1 | len(2) | 02 | AA | state | mov_dist(2) | mov_energy | st_dist(2) | st_energy | det_dist(2) | 55 00 | F8 F7 F6 F5

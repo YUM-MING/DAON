@@ -7,7 +7,7 @@
      클릭 잡음이 생겨(2026-10-18 녹음에서 확인) 분류기·STT 를 망친다. 지원 안 되는 브라우저만 ScriptProcessor 로.
    - 자동 볼륨(AGC)은 끈다: 클리핑(피크 1.0)과 펌핑이 whisper 인식률을 떨어뜨렸다.
      URL 에 ?raw=1 을 붙이면 에코 제거·노이즈 억제까지 전부 끄고 원음을 보낸다 (실험용).
-   - getUserMedia 는 https(또는 localhost)에서만 동작 → 밖에서는 ./run.sh --tunnel 주소로 접속.
+   - getUserMedia 는 https(또는 localhost)에서만 동작 → 밖에서는 run.bat --tunnel 주소로 접속.
 ========================================================= */
 (function(){
   if(!document.getElementById("face") || location.protocol === "file:") return;
@@ -32,7 +32,7 @@
   async function start(){
     if(stream) return;
     if(!window.isSecureContext){
-      say("카메라·마이크는 https 주소에서만 켜집니다 (./run.sh --tunnel)");
+      say("카메라·마이크는 https 주소에서만 켜집니다 (run.bat --tunnel)");
       if(typeof toast === "function") toast("https 주소로 접속해야 카메라·마이크를 켤 수 있어요");
       return;
     }

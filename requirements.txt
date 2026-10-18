@@ -1,13 +1,13 @@
-# DAON 통합 venv — Python 3.12
-# 4개 모듈 requirements 병합. 충돌은 가장 높은 버전으로 통일 (비전 기준 torch 2.14).
+# DAON unified venv - Python 3.12 (Windows)
+# Merged from the 4 module requirement files. Conflicts resolved upward (torch 2.14 from the vision module).
+# Keep this file ASCII-only: pip on Korean Windows may read it as cp949.
 #
-#   python3.12 -m venv .venv && source .venv/bin/activate
-#   pip install -r requirements.txt
+#   py -3.12 -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
 #
-# GPU 없는 PC는 torch CPU 빌드로 교체 가능:
-#   pip install torch==2.14.0 torchvision==0.29.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+# GPU (CUDA) build of torch on Windows, if you have an NVIDIA GPU:
+#   pip install torch==2.14.0 torchvision==0.29.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 
-# ---- 비전 (modules/vision) ----
+# ---- vision (modules/vision) ----
 ultralytics==8.4.164
 opencv-python==5.0.0.93
 numpy==2.5.3
@@ -16,24 +16,24 @@ onnxruntime==1.30.0
 torch==2.14.0
 torchvision==0.29.0
 
-# ---- 음성 (modules/audio_ai) ----
-# 원본 고정: torch 2.9.1 / torchaudio 2.9.1 / numpy 2.1.3 → 비전과 맞추기 위해 상향
+# ---- audio (modules/audio_ai) ----
+# original pins: torch 2.9.1 / torchaudio 2.9.1 / numpy 2.1.3 / scipy 1.15.3 -> raised to match vision (verified)
 torchaudio==2.11.0
-scipy>=1.16          # 원본 1.15.3은 numpy<2.5 요구 → 비전의 numpy 2.5.3과 충돌해 상향
+scipy>=1.16
 soundfile==0.13.1
 sounddevice==0.5.2
 faster-whisper==1.2.0
 requests>=2.32.0
 
-# ---- 대화 (modules/dialogue) ----
-# 런타임은 표준 라이브러리만 사용
+# ---- dialogue (modules/dialogue) ----
+# runtime uses the Python standard library only
 
-# ---- 통합 서버 (server) ----
+# ---- integration server (server/) ----
 fastapi>=0.115
 uvicorn[standard]>=0.30
 websockets>=12
 pyyaml>=6
 pyserial>=3.5
 
-# ---- 테스트 ----
+# ---- tests ----
 pytest>=8

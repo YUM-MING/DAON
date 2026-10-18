@@ -1,6 +1,6 @@
 """시나리오 통합 테스트 — 하드웨어 없이 대화 모듈(실물) + 조정자 + 가짜 브로커로 끝까지 돌린다.
 
-    source .venv/bin/activate && python -m pytest server/tests -q
+    .venv\Scripts\activate && python -m pytest server\tests -q
 
 가짜 시계로 시간을 흘려보내므로 10초 카운트다운도 즉시 검증된다.
 """

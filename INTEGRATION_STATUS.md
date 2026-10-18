@@ -1,6 +1,29 @@
-# DAON 통합 현황 (2026-10-14, 3차)
+# DAON 통합 현황 (2026-10-18, 4차)
 
 > 실폰 테스트 후 진단·튜닝 방법은 **[TUNING_GUIDE.md](TUNING_GUIDE.md)** (음성 인식률 / 표정 / 낙상 오탐 / 입출력 통일).
+> 개발 환경은 **Windows 기준** (`run.bat`). 웹·비전은 통합자(이유민)가 직접 수정, 음성·대화는 담당자에게 요청.
+
+## 0. 담당자별 할 일 한눈에 (2026-10-18)
+
+### 한정연 (음성) — 우선순위 순
+1. **무음/거의 무음 창을 모듈 안에서 걸러 달라.** 값이 전부 0인 1초 창을 분류기가 "낙상·충격음 0.886" 으로 판정한다(학습 데이터에 무음이 없어 OOD). 서버가 임시로 rms<−62dBFS 게이트를 넣었지만 모듈이 하는 게 맞다. 근거 녹음: `logs/home_2/mic_20261018_*.wav`.
+2. 거의 무음 창이 "대화" 로 분류돼 whisper 에 들어가면 환각 문장("대대 목욕수수")이 나온다 → STT 전에 발화 구간의 평균 음량 하한을 두기.
+3. 폰 녹음 2개로 whisper `base` vs `small`, `beam_size` 1 vs 3 비교. 클리핑 입력 피크 정규화 검토.
+4. `speech_threshold`, `SILENCE_SEC`, 최소 발화 길이, `stt_model`, `beam_size` 를 `AudioSensor`/`AudioRouter` 인자로 노출 (서버 `config.yaml` 에서 조정).
+5. 폰 PCM 을 직접 넣는 공개 API `AudioSensor.push_pcm(int16_bytes)` + 이벤트 `ts`(epoch).
+6. 한국어 발화로 speech 클래스 보강 학습 (가장 효과 큼, 시간 걸림).
+
+### 채혜원 (대화·융합) — 우선순위 순
+1. **비상(ESCALATED) 이 끝나지 않는다.** 재알림 상한(2회) 뒤에도 20초마다 안심 멘트가 무한 반복. 상한 뒤 N분 지나면 자동 종료하거나, 보호자 해제 공개 API `engine.resolve_external(reason, now)` 를 추가 (서버는 지금 `_end_safety()` 를 직접 호출).
+2. 의미 없는 STT 문자열("대대 목욕수수")을 발화로 받아 CLARIFY 로 가는 대신, 한글 음절 비율·길이 기준으로 `voice_unclear` 취급.
+3. 표정 `emotion_conf` 가 0.6 미만이면 공감 전략을 바로 꺼내지 말고 한 번 더 관찰 (표정 오인식이 대화로 번지는 것 방지).
+4. 카메라만 낙상일 때 20초(MEDIUM 10초×2) → 15초 목표면 `response_timeout`/`max_asks` 조정 또는 포즈 단독 HIGH 검토. 비전이 이제 `motion` 을 주므로 레이더 없이도 still/moving 이 들어온다.
+5. 보호자 확인 후 발화 문장을 `responses.py` 에서 생성. `pose_pred/audio_pred` 형식을 직접 받는 입력 어댑터 (TUNING_GUIDE 4절).
+
+### 이유민 (비전·웹·통합) — 진행 중
+- 완료: 폰 프로파일(`phone_config`), 하반신 가시성 게이트, 카메라 기반 `motion` 이벤트(`FallDetector.motion_state`), 낙상 스냅샷, 웹 목업 제거·실데이터 연결.
+- 다음: 실폰 스냅샷(`logs/home_N/fall_*.jpg`)으로 폰 프로파일 재보정, 폰 전면 카메라 각도에서 표정 얼굴 크기 확보(전송 해상도 480x360 검토), 시나리오별 데이터 수집(각 10회)으로 카메라 단독 vs 융합 그래프.
+
 
 통합자 작업 기록. 규약과 전체 설계는 `TEAM_INTEGRATION_GUIDE.md`, 서버 구조는 `server/main.py` 머리 주석 참고.
 
@@ -13,7 +36,7 @@
 [보호자 브라우저 (어디서든)] ◀──WebSocket── alert/device/notice ──        ├ 대화·융합 (혜원) : 집마다 엔진 하나
    로그인 · 집 코드 · 대시보드 · 리포트                                    ├ 레이더 워커 (PC USB, 나중에)
                                                                         └ 계정·집·알림 DB (SQLite)
-                     ▲ https 공개 주소 = Cloudflare 터널 (./run.sh --tunnel)
+                     ▲ https 공개 주소 = Cloudflare 터널 (run.bat --tunnel)
 ```
 
 - **계정**: 보호자 이메일+비밀번호 회원가입 → "집"이 생기고 6자리 코드 발급. 로봇 폰은 코드만 입력(`pair.html`). 어르신은 로그인 없음.
@@ -23,11 +46,11 @@
 
 ## 2. 실행
 
-```bash
-./run.sh --tunnel        # 서버 + https 공개 주소 출력 → 폰·보호자가 어디서든 접속 (폰 카메라는 https 필수)
-./run.sh                 # 로컬만 (http://localhost:8000, 같은 PC 브라우저에서 카메라 테스트 가능)
-./run.sh --mock          # 센서 워커 없이 가짜 이벤트
-python -m pytest server/tests -q      # 10개 (시나리오 + 계정/DB)
+```bat
+run.bat --tunnel         REM 서버 + https 공개 주소 출력 → 폰·보호자가 어디서든 접속 (폰 카메라는 https 필수)
+run.bat                  REM 로컬만 (http://localhost:8000, 같은 PC 브라우저에서 카메라 테스트 가능)
+run.bat --mock           REM 센서 워커 없이 가짜 이벤트
+python -m pytest server\tests -q      REM 10개 (시나리오 + 계정/DB)
 ```
 1. 터미널에 뜬 `https://….trycloudflare.com` 을 폰과 보호자 PC 에서 연다.
 2. 폰: "사용자용" → 집 코드 입력 → 얼굴 화면. 화면을 한 번 터치하면 카메라·마이크 권한 → 스트리밍 시작 (좌하단 `📷 123f · 🎤 456c` 로 전송량 확인).
@@ -38,7 +61,7 @@ python -m pytest server/tests -q      # 10개 (시나리오 + 계정/DB)
 
 | 항목 | 상태 | 비고 |
 |---|---|---|
-| 한 번에 기동 | ✅ | `./run.sh --tunnel` |
+| 한 번에 기동 | ✅ | `run.bat --tunnel` |
 | 보호자·사용자 원격 연결 | ✅ | 로그인/회원가입, 집 코드 페어링, 세션 쿠키, 로봇 토큰 |
 | 폰 카메라·마이크 → 서버 판정 | ✅ (시뮬레이션) | 가짜 폰 클라이언트로 JPEG/PCM 전송 → 워커 수신 → 기기 상태 ok. **실제 폰 실기 검증은 미완** |
 | 시나리오 A / B / 오탐 해제 | ✅ (테스트+mock) | 포즈+낙상음 12초, 카메라만 20초 |

@@ -1,7 +1,5 @@
 /* =========================================================
-   common.js — 모든 페이지 공통: 테마 스위처, 토스트, 코너 제스처,
-   그리고 "가짜 메시지(Mock WebSocket)" 버스
-   (실제 서버 연동 전까지 UI를 단독으로 테스트하기 위한 장치 — 기획서 6장/7장 참고)
+   common.js — 모든 페이지 공통: 테마, 토스트, 코너 제스처(모드 재설정)
 ========================================================= */
 
 /* ---------- 테마 ----------
@@ -52,13 +50,5 @@ function mountCornerReset(onReset){
   el.addEventListener("touchstart", begin, {passive:true});
   ["mouseup","mouseleave","touchend","touchcancel"].forEach(ev=> el.addEventListener(ev, cancel));
 }
-
-/* ---------- Mock 이벤트 버스 (실서버의 WebSocket을 대체) ---------- */
-const MockBus = (() => {
-  const listeners = {};
-  function on(type, cb){ (listeners[type] ??= []).push(cb); }
-  function emit(type, payload){ (listeners[type]||[]).forEach(cb=>cb(payload)); }
-  return { on, emit };
-})();
 
 document.addEventListener("DOMContentLoaded", mountThemeSwitcher);

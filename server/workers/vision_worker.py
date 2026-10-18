@@ -44,7 +44,7 @@ class HomeVision:
         bus.subscribe(self._on_module_event)
         self.fall = FallDetector(cfg.fall, bus)
         self.emotion = EmotionRecognizer(cfg.emotion, bus)
-        self.last_pred = self.last_status = self.last_debug = 0.0
+        self.last_pred = self.last_status = self.last_debug = self.last_motion = 0.0
         self._frame = None
         self._last_emotion_sent = None
 
@@ -71,6 +71,11 @@ class HomeVision:
         if now - self.last_status >= self.cfg.status_interval_sec:
             emit("person_status", ts=now, home=self.home, present=pose is not None, posture=posture)
             self.last_status = now
+        if pose is not None and now - self.last_motion >= 1.0:
+            m = self.fall.motion_state(now)
+            if m:
+                emit("motion", ts=now, home=self.home, motion=m, source="vision")   # 레이더 대용 (키포인트 이동량)
+            self.last_motion = now
         if self.debug:
             if emo is not None:
                 box = pose.face_bbox(frame.shape)

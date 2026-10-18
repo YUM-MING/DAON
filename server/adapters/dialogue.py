@@ -7,7 +7,7 @@
     audio_fall                 → sound_event=fall_sound, sound_conf
     speech                     → stt=text, sound_event=speech
     voice_unclear              → sound_event=voice_unclear
-    radar                      → motion=moving|still|none
+    radar                      → motion=moving|still|none (레이더 없으면 비전 motion 이벤트가 대신)
 대화 출력 → 버스
     dialogue_output  (DialogueOutput.to_dict())
     alert            (AlertMessage.to_dict(), 혜원 알림 채널 Notifier 구현으로 받음)
@@ -82,12 +82,13 @@ class DialogueAdapter:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.posture: str | None = None
+        self._radar_seen: float | None = None
         self.last_output: dict | None = None
         self._last_state = "NORMAL"
 
         for t, fn in {"pose_pred": self._pose, "person_status": self._status, "emotion": self._emotion,
                       "audio_fall": self._audio_fall, "speech": self._speech, "voice_unclear": self._unclear,
-                      "radar": self._radar, "alert_cleared": self._cleared}.items():
+                      "radar": self._radar, "motion": self._motion, "alert_cleared": self._cleared}.items():
             bus.subscribe(t, fn)
 
     # ---------------- 입력 변환 ----------------
@@ -140,6 +141,13 @@ class DialogueAdapter:
         self._feed(ev.ts, sound_event="voice_unclear")
 
     def _radar(self, ev) -> None:
+        self._radar_seen = ev.ts
+        self._feed(ev.ts, motion=ev.motion)
+
+    def _motion(self, ev) -> None:
+        """비전 기반 움직임. 레이더가 최근 5초 안에 값을 줬으면 레이더를 우선한다."""
+        if self._radar_seen is not None and ev.ts - self._radar_seen < 5.0:
+            return
         self._feed(ev.ts, motion=ev.motion)
 
     def _cleared(self, ev) -> None:

@@ -135,15 +135,6 @@
   </div>
   <button class="btn sm ghost block mt8" onclick="resetEyeAuto()">↺ 자동 매핑으로 복귀</button>
 
-  <h4>오탐 UX 시나리오 (데모용)</h4>
-  <div style="display:flex; flex-direction:column; gap:8px;">
-    <button class="btn sm danger" onclick="runScenario('positive')">① 긍정 응답 → 오탐 해제</button>
-    <button class="btn sm danger" onclick="runScenario('help')">② 도움 요청 → 즉시 에스컬레이션</button>
-    <button class="btn sm danger" onclick="runScenario('noresponse')">③ 무응답+무움직임 → 긴급 확정</button>
-    <button class="btn sm danger" onclick="runScenario('motion')">④ 무응답+움직임 → 재확인</button>
-    <button class="btn sm danger" onclick="runScenario('unclear')">⑤ 애매한 응답 → 재확인→긴급</button>
-  </div>
-
   <h4>이벤트 로그</h4>
   <div class="log-list" id="logList"></div>
 

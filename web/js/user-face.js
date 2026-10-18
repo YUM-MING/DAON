@@ -1,6 +1,7 @@
 /* =========================================================
    user-face.js — 사용자용(어르신용) 로봇 얼굴 상태 머신
-   기획서 2.1(Zero-Touch 흐름), 2.4(감정 매핑), 3장(오탐 UX)을 목업으로 구현
+   상태(sleep/wake/listening/thinking/speaking/alert/recover)·감정·눈 모양을 화면에 반영한다.
+   상태 값은 서버(ws-client.js)가 준다. 🛠 패널의 버튼은 UI 확인용.
 ========================================================= */
 const face = document.getElementById("face");
 const stateBadge = document.getElementById("stateBadge");
@@ -204,55 +205,6 @@ function startAlertCountdown(sec = 10){
   }, 1000);
 }
 function clearAlertTimer(){ if(alertTimer){ clearInterval(alertTimer); alertTimer=null; } }
-
-/* ---------- 3.1절 오탐 UX 시나리오 ---------- */
-function runScenario(type){
-  log(`--- 시나리오 실행: ${type} ---`);
-  setState("alert", { text:"낙상 의심! 괜찮으세요?" });
-
-  const after = (ms, fn) => setTimeout(fn, ms);
-
-  if(type === "positive"){
-    after(1800, ()=>{
-      clearAlertTimer();
-      setEmotion("happy");
-      setState("recover", { text:'"괜찮아" 응답 인식 → 오탐으로 해제' });
-      log("보호자 측: 긴급 팝업 없음, 로그에 '오탐 해제' 기록");
-      after(2200, ()=> setState("sleep"));
-    });
-  } else if(type === "help"){
-    after(1500, ()=>{
-      speech.textContent = '"도와줘" 인식 → 즉시 에스컬레이션 (카운트다운 건너뜀)';
-      log("즉시 에스컬레이션: 보호자에게 즉시 긴급 팝업 전송");
-      toast("즉시 긴급 팝업이 보호자에게 전송되었습니다");
-    });
-  } else if(type === "noresponse"){
-    log("응답 없음 + 움직임 없음 → 10초 카운트다운 진행");
-    // 기본 startAlertCountdown 그대로 진행, 완료 시 긴급 확정 메시지 출력됨
-  } else if(type === "motion"){
-    after(4000, ()=>{
-      clearAlertTimer();
-      speech.textContent = "다시 한 번 말씀해 주세요";
-      log("레이더가 움직임 감지 → 재질문 1회");
-      after(3500, ()=>{
-        speech.textContent = "응답이 없어 보호자에게 알립니다";
-        log("재질문 후에도 응답 없음 → 긴급 확정");
-        toast("보호자에게 긴급 알림이 전송되었습니다");
-      });
-    });
-  } else if(type === "unclear"){
-    after(4000, ()=>{
-      clearAlertTimer();
-      speech.textContent = "다시 한 번 말씀해 주세요";
-      log("애매한 응답/인식 실패 → 재질문 1회");
-      after(3500, ()=>{
-        speech.textContent = "확인이 어려워 보호자에게 알립니다";
-        log("재질문 후에도 불확실 → 긴급 쪽으로 판단");
-        toast("보호자에게 긴급 알림이 전송되었습니다");
-      });
-    });
-  }
-}
 
 /* ---------- 모서리 제스처(모드 재설정) ---------- */
 mountCornerReset();

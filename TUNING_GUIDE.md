@@ -19,7 +19,7 @@
 
 파일로도 남는다 (`logs/<집코드>/`, 데모 집은 `logs/123456/`, 워커 파일은 `logs/home_<id>/`):
 - `logs/home_1/mic_YYYYMMDD_HHMMSS.wav` — 폰 마이크 소리 원본(16kHz). **정연 모듈로 그대로 재현 가능**:
-  `cd modules/audio_ai && python inference.py --file ../../logs/home_1/mic_….wav --verbose`
+  `cd modules\audio_ai && python inference.py --file ..\..\logs\home_1\mic_….wav --verbose`
 - `logs/home_1/fall_<epoch>.jpg` — 비전이 낙상으로 확정한 순간의 프레임 (오탐이면 이 사진으로 이유를 본다)
 - `logs/123456/eval_log.jsonl` — 0.5초마다 pose/audio/radar/fused 판정 (분석 탭)
 - `logs/daon.db` — 대화 턴·표정 변화·알림 (리포트)

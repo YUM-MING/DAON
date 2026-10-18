@@ -229,6 +229,14 @@ class FallDetector:
             return "uncertain", 0.5  # 급락 직후
         return "no_fall", 0.9
 
+    def motion_state(self, now: float | None = None, window_sec: float = 1.0) -> str | None:
+        """카메라 기반 움직임 유무: 최근 window_sec 안에 키포인트 이동이 있었으면 'moving', 없으면 'still'.
+        사람을 아직 본 적이 없으면 None. 레이더가 없을 때 융합(혜원 모듈 motion 입력)에 쓴다."""
+        if self._prev_keypoints is None and self._last_motion_time == 0.0:
+            return None
+        now = now if now is not None else time.time()
+        return "moving" if now - self._last_motion_time <= window_sec else "still"
+
     def notify_response(self) -> None:
         """통합용 훅: STT가 어르신 음성 응답을 감지하면 호출 → 알림 취소."""
         if self.state == FallState.FALLEN:

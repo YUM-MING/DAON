@@ -51,6 +51,7 @@ class Coordinator:
         self.audio_fall_conf = 0.0
         self.fall_episode_start: float | None = None
         self.radar_motion: str | None = None
+        self.vision_motion: str | None = None
         self.fused = {"pred": "no_fall", "conf": 0.0}
         self.dialogue_state = "NORMAL"
         self.risk_score = 0
@@ -69,7 +70,7 @@ class Coordinator:
             "audio_fall": self.on_audio_fall, "speech": self.on_speech, "radar": self.on_radar,
             "dialogue_output": self.on_dialogue_output, "alert": self.on_alert, "tts_done": self.on_tts_done,
             "guardian_resolve": self.on_guardian_resolve, "guardian_message": self.on_guardian_message,
-            "device": self.on_device, "client": self.on_client,
+            "device": self.on_device, "client": self.on_client, "motion": self.on_motion,
         }.items():
             bus.subscribe(t, fn)
         # 실시간 센서 로그 (보호자 대시보드 '실시간 센서 로그' 카드): 워커/모듈 디버그 이벤트를 그대로 중계
@@ -184,6 +185,9 @@ class Coordinator:
         self.radar_motion = ev.motion
         if self.device["radar"] in ("starting",):
             self.device["radar"] = "ok"
+
+    def on_motion(self, ev) -> None:
+        self.vision_motion = ev.motion
 
     def on_device(self, ev) -> None:
         for k in ("camera", "mic", "radar"):
@@ -363,8 +367,11 @@ class Coordinator:
         return {"pred": "uncertain", "conf": 0.0, "motion": m or "unknown"}
 
     def _sensor_labels(self, now: float) -> dict:
-        """alert_created 의 판정 근거: 평가 로그와 달리 '이번 낙상 에피소드 안에' 낙상음이 있었으면 audio=fall."""
+        """alert_created 의 판정 근거: 평가 로그와 달리 '이번 낙상 에피소드 안에' 낙상음이 있었으면 audio=fall.
+        레이더가 없으면 비전 움직임(motion)으로 대신하고 '(camera)' 를 붙인다."""
         radar = {"still": "no_motion", "moving": "motion", "none": "absent"}.get(self.radar_motion or "", "unknown")
+        if radar == "unknown" and self.vision_motion:
+            radar = {"still": "no_motion", "moving": "motion"}[self.vision_motion] + "(camera)"
         audio = self._audio_pred(now)["pred"]
         if (self.audio_fall_at is not None and self.fall_episode_start is not None
                 and self.audio_fall_at >= self.fall_episode_start - 5.0):

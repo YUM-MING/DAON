@@ -1,0 +1,10 @@
+# 텍스트 파일은 저장소에 LF 로 저장, 각자 OS 기본 줄바꿈으로 체크아웃
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.jpg binary
+*.pt binary
+*.onnx binary
+*.wav binary
+*.mp3 binary

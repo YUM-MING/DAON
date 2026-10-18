@@ -1,7 +1,7 @@
 # DAON 통합 서버 설정
-# 실행: ./run.sh                 (이 파일 사용, 폰 카메라·마이크)
-#       ./run.sh --tunnel        (+ Cloudflare 터널로 https 공개 주소 — 폰·보호자가 밖에서 접속)
-#       ./run.sh --mock          (센서 모듈 없이 가짜 이벤트로 UI/대화 테스트)
+# 실행: run.bat                  (이 파일 사용, 폰 카메라·마이크)
+#       run.bat --tunnel         (+ Cloudflare 터널로 https 공개 주소 — 폰·보호자가 밖에서 접속)
+#       run.bat --mock           (센서 모듈 없이 가짜 이벤트로 UI/대화 테스트)
 
 server:
   host: 0.0.0.0
@@ -23,7 +23,7 @@ modules:
     record: true       # 폰 마이크 소리를 logs/home_N/mic_*.wav 로 저장 (2분 단위, 약 30분 보관) → 정연 모듈로 재현 가능
   radar:
     mode: "off"        # worker | mock | off  — LD2410B 를 PC USB 에 꽂은 뒤 worker 로 (off 는 따옴표 필수)
-    port: /dev/tty.usbserial-0001   # macOS: /dev/tty.usbserial-* , Windows: COM3
+    port: COM3         # 장치 관리자 > 포트(COM & LPT) 에서 USB-TTL(CP2102) 번호 확인
     baud: 256000
     home_code: null    # 이 PC 레이더가 어느 집 센서인지 (null = 첫 번째 집)
   dialogue:

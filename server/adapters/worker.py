@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -55,8 +56,9 @@ class WorkerAdapter:
     def _spawn(self) -> None:
         cmd = [sys.executable, "-u", str(self.script), *self.args]
         log.info("[%s] spawn: %s (cwd=%s)", self.name, " ".join(cmd), self.cwd)
+        env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}   # Windows cp949 콘솔에서도 JSON 깨지지 않게
         self.proc = subprocess.Popen(cmd, cwd=str(self.cwd), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=None, text=True, encoding="utf-8", bufsize=1)
+                                     stderr=None, text=True, encoding="utf-8", bufsize=1, env=env)
 
     def _kill(self) -> None:
         p = self.proc

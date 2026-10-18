@@ -48,6 +48,10 @@ class FallConfig:
     motion_epsilon: float = 0.008
     # 급락 이벤트의 유효 시간(초): 이 시간 안에 누운 자세가 관측되어야 낙상으로 연결
     drop_memory_sec: float = 3.0
+    # '누움' 판정에 하반신(엉덩이 + 무릎/발목) 키포인트가 보여야 하는지.
+    # 폰을 가까이 두면 상반신만 잡혀 bbox 가 납작해지고(종횡비↑) 서 있어도 '누움'으로 오판한다 (2026-10-18 실측).
+    # True 면 하반신이 안 보일 때 posture="unknown" 으로 두고 낙상 판정을 보류한다.
+    require_lower_body_for_lying: bool = False
 
 
 @dataclass
@@ -75,3 +79,23 @@ class AppConfig:
 
 def default_config() -> AppConfig:
     return AppConfig(pose=PoseConfig(), fall=FallConfig(), emotion=EmotionConfig())
+
+
+def phone_config() -> AppConfig:
+    """로봇 폰 전면 카메라(근거리, 320x240 전송) 프로파일.
+
+    UR Fall(원거리) 기준 기본값은 근거리에서 오탐이 많다: 작은 움직임이 큰 '속도'로 보이고,
+    상반신만 보이면 bbox 가 납작해 '누움'으로 본다. 실측 후 다시 조정할 것 (TUNING_GUIDE.md 3절).
+    """
+    fall = FallConfig(
+        drop_velocity_threshold=0.7,
+        soft_drop_velocity=0.4,
+        lying_aspect_ratio=1.4,
+        lying_torso_angle_deg=65.0,
+        fallen_confirm_sec=1.5,
+        min_person_conf=0.6,
+        drop_memory_sec=2.0,
+        require_lower_body_for_lying=True,
+    )
+    emotion = EmotionConfig(min_face_size=48, stable_count=3)
+    return AppConfig(pose=PoseConfig(), fall=fall, emotion=emotion)

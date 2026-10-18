@@ -43,7 +43,7 @@
     <button class="tab-btn" data-tab="history">이력</button>
   </div>
 
-  <!-- ===================== 홈 탭 (4.1, 4.2) ===================== -->
+  <!-- ===================== 홈 탭 ===================== -->
   <section class="tab-panel active" id="tab-home">
     <div class="grid-2">
       <div class="card">
@@ -51,22 +51,22 @@
         <div class="row" style="align-items:center;">
           <div class="silhouette" id="silhouette">🧍</div>
           <div class="col">
-            <p class="muted mb8">주요 감정</p>
+            <p class="muted mb8">최근 표정</p>
             <p style="font-size:20px; font-weight:700;" id="homeEmotion">중립 😐</p>
             <p class="muted mt16 mb8">최근 업데이트</p>
-            <p id="homeUpdated">방금 전</p>
+            <p id="homeUpdated">-</p>
           </div>
         </div>
       </div>
 
       <div class="card">
-        <h3>기기 연결 상태 (4.2절)</h3>
+        <h3>기기 연결 상태</h3>
         <table>
-          <tr><td>로봇 폰</td><td><span class="badge ok dot">온라인</span></td><td id="devBattery">배터리 82%</td></tr>
-          <tr><td>레이더 센서</td><td><span class="badge ok dot" id="devRadar">수신 중</span></td><td class="muted">마지막 수신 3초 전</td></tr>
-          <tr><td>카메라</td><td><span class="badge ok dot">정상</span></td><td></td></tr>
-          <tr><td>마이크</td><td><span class="badge ok dot">정상</span></td><td></td></tr>
-          <tr><td>Wi-Fi</td><td><span class="badge ok dot">연결됨</span></td><td></td></tr>
+          <tr><td>로봇 폰</td><td><span class="badge dot">확인 중</span></td><td id="devBattery" class="muted">-</td></tr>
+          <tr><td>레이더 센서</td><td><span class="badge dot" id="devRadar">확인 중</span></td><td class="muted" id="devRadarNote"></td></tr>
+          <tr><td>카메라</td><td><span class="badge dot">확인 중</span></td><td></td></tr>
+          <tr><td>마이크</td><td><span class="badge dot">확인 중</span></td><td></td></tr>
+          <tr><td>Wi-Fi</td><td><span class="badge dot">확인 중</span></td><td></td></tr>
         </table>
         <div class="warn-banner hidden" id="connWarnBanner">⚠ 일부 센서 연결이 끊겼습니다. 감지가 지연될 수 있어요.</div>
       </div>
@@ -83,10 +83,10 @@
     </div>
   </section>
 
-  <!-- ===================== 분석(평가) 탭 (4.3) ===================== -->
+  <!-- ===================== 분석(평가) 탭 ===================== -->
   <section class="tab-panel" id="tab-analysis">
     <div class="eval-hidden-note card" id="evalHiddenNote">
-      이 탭은 "정답 라벨이 있는 평가 로그"를 기반으로 합니다. 상단의 <b>개발자/평가 모드</b>를 켜면 확인할 수 있습니다.
+      센서별 판정 타임라인과 정확도 그래프입니다. 상단의 <b>개발자/평가 모드</b>를 켜면 서버에 쌓인 평가 로그로 그립니다.
     </div>
     <div id="evalContent" class="hidden">
       <div class="card">
@@ -134,7 +134,7 @@
   <!-- ===================== 이력 탭 ===================== -->
   <section class="tab-panel" id="tab-history">
     <div class="card">
-      <h3>낙상 이벤트 로그와 처리 결과 (3.2절)</h3>
+      <h3>낙상 이벤트 로그와 처리 결과</h3>
       <table>
         <thead><tr><th>시각</th><th>판정 근거</th><th>상태</th><th>처리 결과</th><th>처리자</th></tr></thead>
         <tbody id="historyBody"></tbody>
@@ -143,7 +143,7 @@
   </section>
 </main>
 
-<!-- ===================== 긴급 팝업 (4.4) ===================== -->
+<!-- ===================== 긴급 팝업 ===================== -->
 <div class="emergency-overlay hidden" id="emergencyOverlay">
   <div class="emergency-box">
     <div class="emergency-pulse">🚨</div>

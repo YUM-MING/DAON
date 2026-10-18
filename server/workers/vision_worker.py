@@ -108,11 +108,11 @@ def main() -> None:
 
     import cv2
     import numpy as np
-    from src.config import default_config
+    from src.config import default_config, phone_config
     from src.pose_tracker import PoseTracker
 
     print("[vision] 모델 로딩…", file=sys.stderr)
-    cfg = default_config()
+    cfg = phone_config() if args.source == "phone" else default_config()   # 근거리 폰 프로파일 (src/config.py)
     tracker = PoseTracker(cfg.pose)
     homes: dict[int | None, HomeVision] = {}
 

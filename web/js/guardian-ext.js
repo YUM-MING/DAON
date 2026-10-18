@@ -149,10 +149,11 @@
     /* ---------- 리포트 탭: DB 기반 ---------- */
     function renderReport(){
       api(`/api/homes/${hid}/report?days=7`).then(r => {
+        const ew = document.getElementById("emotionWeekChart");
         if(r.emotion_week && r.emotion_week.length && typeof renderEmotionWeek === "function"){
-          document.getElementById("emotionWeekChart").innerHTML = "";
+          ew.innerHTML = "";
           renderEmotionWeek("emotionWeekChart", r.emotion_week);
-        }
+        } else if(ew){ ew.innerHTML = '<p class="muted">최근 7일 표정 기록이 없습니다</p>'; }
         const ul = document.getElementById("convoSummary");
         if(ul){
           const items = (r.conversations || []).slice(-12).map(c => `<li>${t(c.ts)} ${c.data.who === "robot" ? "🤖" : "👵"} ${c.data.text}</li>`);

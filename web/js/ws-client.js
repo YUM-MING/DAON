@@ -46,7 +46,14 @@
     if(isRobot){ localStorage.removeItem("daon_robot_token"); location.href = "pair.html"; }
     else location.href = "auth.html?next=guardian-dashboard.html";
   }
-  window.DaonWS = { send, sendBinary, connected };
+  function testTTS(){
+    const voices = ("speechSynthesis" in window) ? speechSynthesis.getVoices() : [];
+    const ko = voices.filter(v => (v.lang||"").toLowerCase().startsWith("ko")).map(v => v.name);
+    if(typeof log === "function") log(`TTS 테스트: 음성 ${voices.length}개, 한국어 ${ko.length}개 ${ko.slice(0,3).join(", ")}`);
+    if(!("speechSynthesis" in window)){ if(typeof toast === "function") toast("이 브라우저는 음성 합성을 지원하지 않습니다"); return; }
+    speak("안녕하세요, 다온이에요. 제 목소리가 들리시나요?", -1);
+  }
+  window.DaonWS = { send, sendBinary, connected, testTTS };
 
   /* ============================ 로봇 얼굴 ============================ */
   const UI_EMOTION = { neutral:"neutral", happy:"happy", sad:"sad", angry:"angry", surprised:"neutral", fear:"sad" };
@@ -73,7 +80,7 @@
   }
 
   function speak(text, utteranceId){
-    const done = (ok) => { send({type:"tts_done", utterance_id: utteranceId, ok}); document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:false}})); };
+    const done = (ok) => { if(utteranceId !== -1) send({type:"tts_done", utterance_id: utteranceId, ok}); if(typeof log === "function" && utteranceId === -1) log("TTS 테스트 " + (ok ? "재생 완료" : "실패")); document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:false}})); };
     document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:true}}));
     if(!("speechSynthesis" in window)){ setTimeout(() => done(false), Math.max(1500, text.length*120)); return; }
     try{
@@ -165,7 +172,7 @@
         // 행 순서: 로봇 폰 / 레이더 / 카메라 / 마이크 / Wi-Fi  (guardian-dashboard.html)
         const map = [["robot", m.robot_online ? "ok" : "off"], ["radar", m.radar], ["camera", m.camera], ["mic", m.mic], ["wifi", m.wifi]];
         map.forEach(([, st], i) => { const r = rows[i]; if(r){ badge(r.querySelector(".badge"), st === "unknown" ? "off" : st); } });
-        if(rows[0] && m.battery != null){ const c = rows[0].querySelectorAll("td")[2]; if(c) c.textContent = "배터리 " + m.battery + "%"; }
+        const bat = document.getElementById("devBattery"); if(bat) bat.textContent = m.battery != null ? "배터리 " + m.battery + "%" : "";
         const warn = [m.radar, m.camera, m.mic].some(s => s === "error" || s === "stale");
         const banner = document.getElementById("connWarnBanner"); if(banner) banner.classList.toggle("hidden", !warn);
         break;
@@ -258,6 +265,8 @@
           { label:"pose", segments: seg("pose") }, { label:"audio", segments: seg("audio") },
           { label:"radar", segments: seg("radar") }, { label:"융합", segments: seg("fused") },
         ], total);
+        const dc = document.getElementById("delayChart"); if(dc) dc.innerHTML = '<p class="muted">알림 지연 측정 데이터가 아직 없습니다.</p>';
+        const tb = document.querySelector("#scenarioTable tbody"); if(tb) tb.innerHTML = '<tr><td class="muted" colspan="6">시나리오 평가 전</td></tr>';
         const cam = summary && summary.camera;
         if(cam && cam.f1 != null){
           renderAccuracyBars("barChart", [{ name:"카메라 단독 (UR Fall)", Recall:cam.recall, Precision:cam.precision, F1:cam.f1 }]);
@@ -266,8 +275,15 @@
         }
         analysisInited = true;
       }catch(e){
-        if(origInit) origInit();
+        // 서버 모드에서는 가짜 예시 데이터를 그리지 않는다
+        const tl = document.getElementById("timelineChart");
+        if(tl) tl.innerHTML = '<p class="muted">아직 평가 로그가 없습니다. 로봇 폰이 연결되어 센서 판정이 쌓이면 여기에 타임라인이 그려집니다.</p>';
+        const bc = document.getElementById("barChart"); if(bc) bc.innerHTML = '<p class="muted">카메라 단독 평가 수치(UR Fall)는 서버의 /api/eval_summary 에서 읽습니다.</p>';
+        const cm = document.getElementById("confMatrix"); if(cm) cm.innerHTML = '<p class="muted">-</p>';
+        const dc = document.getElementById("delayChart"); if(dc) dc.innerHTML = '<p class="muted">알림 지연 측정 데이터가 아직 없습니다.</p>';
+        const tb = document.querySelector("#scenarioTable tbody"); if(tb) tb.innerHTML = '<tr><td class="muted" colspan="6">시나리오 평가 전</td></tr>';
       }
+      analysisInited = true;
       document.dispatchEvent(new CustomEvent("daon:analysis"));
     };
   }

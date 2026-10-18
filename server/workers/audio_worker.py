@@ -26,6 +26,7 @@ sys.path.insert(0, str(AUDIO))
 os.chdir(AUDIO)
 
 TYPE_MAP = {"fall": "audio_fall", "speech": "speech", "voice_unclear": "voice_unclear"}
+SILENCE_RMS = 0.0008      # -62 dBFS. 이 아래는 사실상 디지털 무음 (폰 AEC 억제 구간) → 분류하지 않는다
 
 
 def emit(type: str, ts: float | None = None, **data) -> None:
@@ -61,15 +62,26 @@ class HomeAudio:
         self.muted = False
         self.debug, self.record_dir = debug, record_dir
         self.router = AudioRouter(model, stt, device, emit_fn=lambda ev: forward(home, ev, self.muted), stt_async=True)
-        if debug:                                   # 윈도우마다 분류 결과를 내보낸다 (정연 모듈 내부 _classify 를 감싸기만 함)
-            orig = self.router._classify
+        # 무음 게이트 + 디버그. 정연 모듈 내부 _classify 를 감싸기만 한다.
+        # 실측(2026-10-18 폰 녹음): 값이 전부 0인 창(폰 에코 제거가 마이크를 누른 구간)을 분류기가 "낙상·충격음 0.89"로
+        # 판정해 낙상 오탐이 연쇄로 났다. 거의 무음(rms < SILENCE_RMS) 이거나 절반 이상이 정확히 0이면 '일상 소음'으로 본다.
+        orig = self.router._classify
+        self.gated = 0
 
-            def wrapped(window):
+        def wrapped(window):
+            rms = float(np.sqrt(np.mean(window ** 2))) if len(window) else 0.0
+            zero_frac = float(np.mean(window == 0.0)) if len(window) else 1.0
+            if rms < SILENCE_RMS or zero_frac > 0.9:
+                label, conf, prob = "ambient", 1.0, np.array([0.0, 0.0, 1.0], dtype="float32")
+                self.gated += 1
+            else:
                 label, conf, prob = orig(window)
+            if debug:
                 emit("audio_debug", home=home, label=label, conf=round(float(conf), 2),
-                     p_fall=round(float(prob[1]), 2), muted=self.muted)
-                return label, conf, prob
-            self.router._classify = wrapped
+                     p_fall=round(float(prob[1]), 2), muted=self.muted, rms=round(rms, 4),
+                     gated=bool(rms < SILENCE_RMS or zero_frac > 0.9))
+            return label, conf, prob
+        self.router._classify = wrapped
         self._wav, self._wav_started, self._wav_bytes = None, 0.0, 0
         self.record_sec = 120                       # wav 파일 하나 길이 (초)
         self.keep_files = 15                        # 오래된 녹음은 지운다 (약 30분 보관)

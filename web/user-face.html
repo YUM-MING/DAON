@@ -89,9 +89,9 @@
 
 <button class="btn sm ghost panel-toggle" onclick="togglePanel()">🛠</button>
 
-<!-- 시연/개발자 패널: 기획서 6장 메시지 규약을 버튼으로 시뮬레이션 -->
+<!-- 시연/개발자 패널 -->
 <div class="dev-panel" id="devPanel">
-  <h4>상태 전환 (2.1절)</h4>
+  <h4>상태 전환</h4>
   <div class="btn-grid">
     <button class="btn sm outline" onclick="setState('sleep')">sleep</button>
     <button class="btn sm outline" onclick="setState('wake')">wake</button>
@@ -101,7 +101,7 @@
     <button class="btn sm outline" onclick="setState('recover')">recover</button>
   </div>
 
-  <h4>감정 매핑 (2.4절)</h4>
+  <h4>감정 매핑</h4>
   <div class="btn-grid">
     <button class="btn sm outline" onclick="setEmotion('neutral')">중립</button>
     <button class="btn sm outline" onclick="setEmotion('happy')">기쁨</button>
@@ -135,7 +135,7 @@
   </div>
   <button class="btn sm ghost block mt8" onclick="resetEyeAuto()">↺ 자동 매핑으로 복귀</button>
 
-  <h4>오탐 UX 시나리오 (3.1절)</h4>
+  <h4>오탐 UX 시나리오 (데모용)</h4>
   <div style="display:flex; flex-direction:column; gap:8px;">
     <button class="btn sm danger" onclick="runScenario('positive')">① 긍정 응답 → 오탐 해제</button>
     <button class="btn sm danger" onclick="runScenario('help')">② 도움 요청 → 즉시 에스컬레이션</button>
@@ -149,7 +149,8 @@
 
   <h4>서버 연결</h4>
   <div id="robotHomeInfo" class="muted" style="font-size:12px; margin-bottom:8px;">연결된 집: -</div>
-  <button class="btn sm outline block" onclick="unpairRobot()">🔌 로봇 연결 해제 (다른 집 코드로)</button>
+  <button class="btn sm outline block" onclick="DaonWS && DaonWS.testTTS()">🔊 TTS 테스트 (목소리가 나오는지)</button>
+  <button class="btn sm outline block mt8" onclick="unpairRobot()">🔌 로봇 연결 해제 (다른 집 코드로)</button>
 </div>
 
 <script src="js/common.js"></script>

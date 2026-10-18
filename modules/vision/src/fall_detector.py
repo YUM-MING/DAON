@@ -51,7 +51,15 @@ class FallDetector:
 
     # ---------- 자세 판정 ----------
 
+    # COCO 키포인트: 11,12 엉덩이 / 13,14 무릎 / 15,16 발목
+    _HIPS, _LEGS = (11, 12), (13, 14, 15, 16)
+
+    def lower_body_visible(self, pose: PersonPose) -> bool:
+        return any(pose.valid(i) for i in self._HIPS) and any(pose.valid(i) for i in self._LEGS)
+
     def posture(self, pose: PersonPose) -> str:
+        if self.config.require_lower_body_for_lying and not self.lower_body_visible(pose):
+            return "unknown"          # 상반신만 보임 → 누움/서있음을 판단하지 않는다 (근거리 폰 오탐 방지)
         angle = pose.torso_angle_deg
         lying = pose.aspect_ratio >= self.config.lying_aspect_ratio or (
             angle is not None and angle >= self.config.lying_torso_angle_deg

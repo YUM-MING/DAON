@@ -15,6 +15,7 @@
   const params = new URLSearchParams(location.search);
   const RAW = params.get("raw") === "1";
   let stream = null, video = null, canvas = null, ctx2d = null, frameTimer = null, audioCtx = null;
+  let starting = false;          // getUserMedia 가 끝나기 전에 start() 가 또 불리는 것을 막는다
   let fps = 6, sending = { cam:false, mic:false }, frames = 0, pcmChunks = 0, zeroChunks = 0;
   const btn = document.createElement("button");
   btn.className = "btn danger";
@@ -29,13 +30,20 @@
   const setInd = () => { ind.textContent = `📷 ${sending.cam ? frames + "f" : "off"} · 🎤 ${sending.mic ? pcmChunks + "c" + (zeroChunks ? " (무음 " + zeroChunks + ")" : "") : "off"}${RAW ? " · raw" : ""}`; };
   const say = (m) => { if(typeof log === "function") log(m); };
 
+  // start() 를 부르는 곳이 다섯 군데다 (버튼 클릭 / daon:conn / DaonReady / touchstart / click).
+  // stream 은 getUserMedia 가 끝나야 채워지므로, 권한 창이 떠 있는 동안 다른 호출이 들어오면
+  // `if(stream) return` 을 그냥 통과한다. 그러면 마이크 캡처가 두 개 붙어 같은 소리가 두 번
+  // 서버로 가고, 녹음이 실제 시간의 2배가 되며 STT 가 망가진다(측정값: 글자 오류율 71.7%).
+  // 폰은 터치 한 번에 touchstart 와 click 이 둘 다 발생하므로 쉽게 재현된다.
+  // → await 이전에 동기적으로 막는다.
   async function start(){
-    if(stream) return;
+    if(stream || starting) return;
     if(!window.isSecureContext){
       say("카메라·마이크는 https 주소에서만 켜집니다 (run.bat --tunnel)");
       if(typeof toast === "function") toast("https 주소로 접속해야 카메라·마이크를 켤 수 있어요");
       return;
     }
+    starting = true;
     try{
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } },
@@ -47,6 +55,8 @@
       btn.style.display = "block";
       btn.textContent = "📷🎤 카메라·마이크 켜기 (" + e.name + ")";
       return;
+    }finally{
+      starting = false;        // 여기부터는 stream 이 채워져 있으므로 위 가드가 막아 준다
     }
     btn.style.display = "none";
     const track = stream.getAudioTracks()[0];

@@ -63,6 +63,79 @@ VOICE_UNCLEAR_MIN_SEC = 0.8       # 사람 소리는 났는데 말로 인식되�
 STT_MODEL = "base"
 FALL_IDX = CLASSES.index("fall")
 
+# ─────────────────────────────────────────────────────────────────────────
+# 무음 게이트 — 신호가 사실상 없는 윈도우는 아예 분류하지 않는다.
+#
+# 왜 필요한가
+#   분류기는 "완전한 디지털 무음"을 학습한 적이 없다. 0으로만 채워진 윈도우를
+#   넣으면 P(fall)=0.886 같은 값이 나온다(입력이 같으니 매번 같은 값). 학습
+#   분포 밖의 입력에 softmax 는 "모른다"고 답하지 못하고 아무 값이나 내놓는다.
+#
+# 실제로 두 번 확인됐다
+#   1) 2026-10-12  AI Hub 한국어 노인 발화 150개(화자 5명)를 넣었더니
+#      τ=0.60 을 넘은 윈도우 62개가 **전부** 파일 앞뒤 무음 구간이었다.
+#      무음을 빼면 오탐 0/1454 윈도우, 0/150 파일.
+#   2) 2026-10-18  팀 통합 폰 녹음에서 **소리의 74% 가 완전한 디지털 무음**
+#      이었고(로봇이 말하는 동안 폰 AEC 가 마이크를 통째로 누름),
+#      900번 판정 중 353번(39%)이 낙상음으로 찍혔다. (TUNING_GUIDE.md)
+#
+# 기준값은 측정해서 골랐다
+#   | | peak | rms |
+#   |---|---|---|
+#   | 측정된 무음 창의 최대          | 0.00034 | ~0.00000 |
+#   | **게이트**                   | **0.002** | **0.0008** |
+#   | 실환경 낙상 충격 창의 최소     | 0.0275  | 0.00442  |
+#   | 한국어 발화 창의 중앙값        | 0.62    | 0.10     |
+#   양쪽으로 각각 14배 / 5.5배 여유가 있고, 실환경 낙상 30건의 충격 창 중
+#   어느 기준에도 걸리는 것은 0개였다. (근거: outputs/realworld_eval.txt)
+#
+#   RMS 만 보지 않는 이유: 충격음은 0.2~0.5초로 짧아 1초 평균을 내면 묻힌다.
+#   peak 만 보지 않는 이유: AEC 가 누른 구간에 튀는 샘플 하나가 남을 수 있다.
+#   0 비율도 보는 이유: 폰 AEC 는 구간을 통째로 0 으로 만든다.
+SILENCE_PEAK = 0.002        # 최대 진폭이 이보다 작으면 무음
+SILENCE_RMS = 0.0008        # -62 dBFS. 서버 워커(audio_worker.py)와 같은 값
+SILENCE_ZERO_FRAC = 0.9     # 창의 90% 이상이 정확히 0 이면 무음 (폰 AEC 억제 구간)
+
+# STT 에 넣기 전 발화 구간의 음량 하한.
+#   거의 무음인 버퍼가 whisper 에 들어가면 "대대 목욕수수" 같은 환각 문장이 나온다.
+#   한국어 노인 발화 150개의 파일 전체 RMS 최소값이 0.0459 이므로 11배 여유.
+UTTERANCE_MIN_RMS = 0.004
+
+# 공통 라벨 사전(LABELS.md v0.2 / labels.json) 에 맞춘 값들.
+#   audio_pred.detail.label = speech | impact | ambient | silence
+#   · 내부 클래스 이름은 "fall" 을 그대로 쓴다. 체크포인트와 학습·평가 코드가
+#     전부 "fall" 로 되어 있어서 지금 바꾸면 재현이 깨진다.
+#   · 밖으로 내보낼 때만 LABEL_OUT 으로 바꾼다 (fall → impact).
+#   · 이벤트 type 은 아직 "fall" 이다. 서버 TYPE_MAP 이 "fall" 을 기대하므로,
+#     type 을 impact 로 바꾸려면 server/workers/audio_worker.py 도 같이 고쳐야 한다.
+#     → 팀장과 상의 후 한 번에 바꾼다. (LABELS.md 9절 '네이티브 출력 전환')
+SILENCE_LABEL = "silence"
+LABEL_OUT = {"speech": "speech", "fall": "impact", "ambient": "ambient",
+             SILENCE_LABEL: SILENCE_LABEL}
+# voice_unclear 로 돌릴 한글 음절 비율 하한 (LABELS.md: lang_ratio < 0.5)
+MIN_LANG_RATIO = 0.5
+
+
+def rms_dbfs(x: np.ndarray) -> float:
+    """창의 음량을 dBFS 로. 완전한 무음은 -120 으로 둔다."""
+    if x.size == 0:
+        return -120.0
+    r = float(np.sqrt(np.mean(x.astype(np.float64) ** 2)))
+    return -120.0 if r <= 1e-12 else max(-120.0, 20.0 * np.log10(r))
+
+
+def lang_ratio(text: str) -> float:
+    """한글 음절 비율. STT 가 엉뚱한 언어로 받아쓴 결과를 걸러내는 데 쓴다.
+
+    whisper 는 알아듣지 못하면 학습 데이터에 많던 문구를 뱉는 버릇이 있다
+    ("Thank you", "ご視聴ありがとうございました"). 한글 비율이 낮으면 발화로 보지 않는다.
+    """
+    chars = [c for c in text if not c.isspace() and c.isalnum()]
+    if not chars:
+        return 0.0
+    hangul = sum(1 for c in chars if "가" <= c <= "힣" or "ㄱ" <= c <= "ㆎ")
+    return hangul / len(chars)
+
 
 def emit(obj: dict) -> None:
     print(json.dumps(obj, ensure_ascii=False), flush=True)
@@ -73,6 +146,7 @@ class SpeechToText:
 
     def __init__(self, model_size: str = STT_MODEL, enabled: bool = True):
         self.model = None
+        self.model_size = model_size
         if not enabled:
             return
         try:
@@ -122,6 +196,14 @@ class AudioRouter:
         self._last_fall_t = -1e9          # 마지막 낙상 알림 시각
         self.speech_buf: list[np.ndarray] = []
         self.silence = 0.0
+        # 진단용 카운터. 서버에서 주기적으로 읽어 "마이크가 눌리고 있다"를 알 수 있다.
+        self.windows = 0                  # push 된 전체 창
+        self.gated = 0                    # 그중 무음으로 걸러낸 창
+        self.quiet_utterances = 0         # 음량 부족으로 STT 를 건너뛴 발화
+        self.rejected_lang = 0            # 한글 비율이 낮아 버린 STT 결과
+        # 마지막 창의 상태. 서버가 audio_pred 를 만들 때 읽어 간다 (LABELS.md).
+        self.last_label = SILENCE_LABEL
+        self.last_rms_dbfs = -120.0
         # 시계를 주입할 수 있게 둔다. 파일 입력 테스트에서는 실제 시간이 아니라
         # 오디오 위치를 시간으로 써야 재알림 억제가 올바르게 동작한다.
         self.clock = clock if clock is not None else time.time
@@ -167,9 +249,21 @@ class AudioRouter:
     def _transcribe_and_emit(self, wav: np.ndarray, t: float) -> None:
         dur = round(len(wav) / SAMPLE_RATE, 2)
         text = self.stt.transcribe(wav)
+        lr = lang_ratio(text)
+        if text and lr < MIN_LANG_RATIO:
+            # 한국어로 받아쓴 결과가 아니다. whisper 가 못 알아들을 때 학습 데이터에
+            # 많던 문구를 뱉는 경우("Thank you", "ご視聴…"). 발화로 올리지 않는다.
+            # LABELS.md: voice_unclear = STT 가 비었거나 lang_ratio < 0.5
+            if self.verbose:
+                print(f"[STT] 한글 비율 {lr:.2f} < {MIN_LANG_RATIO} → 버림: {text!r}",
+                      file=sys.stderr)
+            self.rejected_lang += 1
+            text = ""
         if text:
             self.emit({"type": "speech", "text": text, "duration": dur,
-                       "time": round(t - self.t0, 2)})
+                       "time": round(t - self.t0, 2),
+                       "detail": {"stt_model": self.stt.model_size,
+                                  "lang_ratio": round(lr, 2)}})
         elif self.stt.model is not None and dur >= VOICE_UNCLEAR_MIN_SEC:
             # 사람 목소리로 분류됐는데 텍스트가 안 나온 구간.
             # 신음·비명·울음처럼 '말이 아닌 소리'일 가능성이 있다.
@@ -185,6 +279,19 @@ class AudioRouter:
         self.speech_buf.clear()
         if len(wav) < SAMPLE_RATE * 0.4:        # 너무 짧으면 버림
             return
+        # 거의 무음인 버퍼를 whisper 에 넣으면 "대대 목욕수수" 같은 환각 문장이 나온다.
+        # 소리는 났지만 말로 쓸 수 없는 구간이므로 voice_unclear 로 내보낸다.
+        rms = float(np.sqrt(np.mean(wav.astype(np.float64) ** 2)))
+        if rms < UTTERANCE_MIN_RMS:
+            self.quiet_utterances += 1
+            dur = round(len(wav) / SAMPLE_RATE, 2)
+            if self.verbose:
+                print(f"  [발화 {dur}s] 음량 부족 rms={rms:.5f} → STT 생략", file=sys.stderr)
+            if dur >= VOICE_UNCLEAR_MIN_SEC:
+                self.emit({"type": "voice_unclear", "duration": dur,
+                           "reason": "too_quiet", "rms": round(rms, 5),
+                           "time": round(self._now - self.t0, 2)})
+            return
         if self._stt_q is not None:
             self._stt_q.put((wav, self._now))   # 별도 스레드로 넘기고 바로 복귀
         else:
@@ -194,9 +301,26 @@ class AudioRouter:
         """window: 분류용 1초, hop: 새로 들어온 구간(발화 버퍼에 쌓을 부분)
         t: 이 윈도우의 시각. None 이면 self.clock() 을 쓴다."""
         self._now = self.clock() if t is None else t
+        self.windows += 1
+
+        # ---- 무음 게이트 -----------------------------------------------------
+        # 학습 분포 밖(디지털 무음)의 입력은 모델에 넣지 않는다. 넣으면 아무 값이나
+        # 나오고, 그게 낙상 임계값을 넘으면 그대로 오탐이 된다. 위 상수 주석 참고.
+        self.last_rms_dbfs = rms_dbfs(window)        # LABELS.md audio_pred.detail.rms_dbfs
+        if self._is_silent(window):
+            self.gated += 1
+            if self.verbose:
+                print(f"  [{self._now - self.t0:6.1f}s] 무음      "
+                      f"{self.last_rms_dbfs:6.1f} dBFS  (분류 생략)", file=sys.stderr)
+            self.last_label = SILENCE_LABEL          # 서버가 audio_pred.detail.label 로 쓴다
+            self._fall_hist.append(0.0)
+            self._silence_hop(hop)
+            return
+
         label, conf, prob = self._classify(window)
+        self.last_label = label
         if self.verbose:                     # 디버깅용: 매 윈도우 판정 결과를 보여준다
-            print(f"  [{self._now - self.t0:6.1f}s] {CLASS_KO[label]:<8} {conf:.2f}"
+            print(f"  [{self._now - self.t0:6.1f}s] {CLASS_KO.get(label, label):<8} {conf:.2f}"
                   f"  P(fall)={float(prob[FALL_IDX]):.2f}", file=sys.stderr)
 
         # ---- 낙상 판정: 최근 K개 규칙 + 재알림 억제 ----------------------------
@@ -228,12 +352,27 @@ class AudioRouter:
             if sum(len(b) for b in self.speech_buf) > MAX_UTTERANCE_SEC * SAMPLE_RATE:
                 self._flush_speech()
         else:
-            if self.speech_buf:
-                self.silence += HOP_SEC
-                self.speech_buf.append(hop)          # 끝말이 잘리지 않도록 조금 더 담는다
-                if self.silence >= SILENCE_SEC:
-                    self._flush_speech()
-                    self.silence = 0.0
+            self._silence_hop(hop)
+
+    @staticmethod
+    def _is_silent(window: np.ndarray) -> bool:
+        """사실상 신호가 없는 창인가. 셋 중 하나라도 해당하면 무음으로 본다."""
+        if window.size == 0:
+            return True
+        if float(np.abs(window).max()) < SILENCE_PEAK:
+            return True
+        if float(np.sqrt(np.mean(window.astype(np.float64) ** 2))) < SILENCE_RMS:
+            return True
+        return float(np.mean(window == 0.0)) > SILENCE_ZERO_FRAC
+
+    def _silence_hop(self, hop: np.ndarray) -> None:
+        """말이 아닌 구간을 처리한다. 발화 중이었다면 종료 여부를 센다."""
+        if self.speech_buf:
+            self.silence += HOP_SEC
+            self.speech_buf.append(hop)              # 끝말이 잘리지 않도록 조금 더 담는다
+            if self.silence >= SILENCE_SEC:
+                self._flush_speech()
+                self.silence = 0.0
 
     def close(self, timeout: float = 10.0) -> None:
         """남은 발화를 변환하고 STT 스레드를 정리한다."""

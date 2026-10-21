@@ -34,7 +34,8 @@ def emit(type: str, ts: float | None = None, **data) -> None:
 class HomeVision:
     """집 하나의 낙상 상태머신 + 표정 인식기 (포즈 추적기는 밖에서 공유)."""
 
-    def __init__(self, home: int, cfg, tracker, debug: bool = False, snap_dir: str | None = None) -> None:
+    def __init__(self, home: int, cfg, tracker, debug: bool = False, snap_dir: str | None = None,
+                 record_dir: str | None = None, record_fps: float = 10.0) -> None:
         from src.emotion_recognizer import EmotionRecognizer
         from src.events import EventBus
         from src.fall_detector import FallDetector
@@ -47,6 +48,36 @@ class HomeVision:
         self.last_pred = self.last_status = self.last_debug = self.last_motion = 0.0
         self._frame = None
         self._last_emotion_sent = None
+        # 폰 프레임 녹화 (음성 워커의 mic_*.wav 와 같은 역할): logs/home_N/cam_YYYYMMDD_HHMMSS.mp4 + 같은 이름 .jsonl(프레임 시각)
+        self.record_dir, self.record_fps = record_dir, record_fps
+        self.record_sec, self.keep_files = 120, 15
+        self._writer = self._ts_file = None
+        self._rec_started, self._rec_size = 0.0, None
+
+    def _record(self, frame, now: float) -> None:
+        """받은 프레임을 그대로 mp4 로 남긴다 → scripts/eval_fall.py 로 낙상 임계값 재보정·오탐 분석 가능."""
+        import cv2, glob, json as _json
+        h, w = frame.shape[:2]
+        if (self._writer is None or now - self._rec_started >= self.record_sec or self._rec_size != (w, h)):
+            self._close_record()
+            os.makedirs(self.record_dir, exist_ok=True)
+            for old in sorted(glob.glob(os.path.join(self.record_dir, "cam_*.mp4")))[:-self.keep_files]:
+                for p in (old, old[:-4] + ".jsonl"):
+                    try: os.remove(p)
+                    except OSError: pass
+            stem = os.path.join(self.record_dir, f"cam_{time.strftime('%Y%m%d_%H%M%S')}")
+            self._writer = cv2.VideoWriter(stem + ".mp4", cv2.VideoWriter_fourcc(*"mp4v"), self.record_fps, (w, h))
+            self._ts_file = open(stem + ".jsonl", "w", encoding="utf-8")
+            self._rec_started, self._rec_size, self._rec_idx = now, (w, h), 0
+        self._writer.write(frame)
+        self._ts_file.write(_json.dumps({"i": self._rec_idx, "ts": now}) + "\n")
+        self._rec_idx += 1
+
+    def _close_record(self) -> None:
+        if self._writer is not None:
+            self._writer.release(); self._writer = None
+        if self._ts_file is not None:
+            self._ts_file.close(); self._ts_file = None
 
     def _on_module_event(self, e) -> None:
         emit(e.type, ts=e.timestamp, home=self.home, **e.data)
@@ -61,10 +92,16 @@ class HomeVision:
 
     def process(self, frame, now: float) -> None:
         self._frame = frame
+        if self.record_dir:
+            self._record(frame, now)
         pose = self.tracker.process(frame)
         posture = self.fall.update(pose, frame.shape[0], now=now)
         pred, conf = self.fall.current_pred(now=now)
-        emo = self.emotion.process(frame, pose) if pose is not None else None
+        if pose is not None:
+            emo = self.emotion.process(frame, pose, now=now)
+        else:
+            emo = None
+            self.emotion.tick(now)          # 얼굴이 오래 없으면 mood=unknown (LABELS.md 4.2)
         if now - self.last_pred >= self.cfg.pred_interval_sec:
             emit("pose_pred", ts=now, home=self.home, pred=pred, conf=round(conf, 2), fall_state=self.fall.state.value)
             self.last_pred = now
@@ -80,8 +117,10 @@ class HomeVision:
             if emo is not None:
                 box = pose.face_bbox(frame.shape)
                 face_px = int(min(box[2] - box[0], box[3] - box[1])) if box else 0
+                mood = self.emotion.mood.current
                 emit("emotion_debug", ts=now, home=self.home, label=emo[0], raw=self.emotion.last_raw,
-                     conf=round(float(emo[1]), 2), face_px=face_px, stable=(emo[0] == self.emotion.current))
+                     expression=self.emotion.last_expression, conf=round(float(emo[1]), 2), face_px=face_px,
+                     mood=mood["pred"] if mood else None, stable=(emo[0] == self.emotion.current))
             if now - self.last_debug >= 1.0:
                 self.last_debug = now
                 emit("vision_debug", ts=now, home=self.home, **self._fall_internals(pose, posture, pred, conf, now))
@@ -109,6 +148,7 @@ def main() -> None:
     ap.add_argument("--home", type=int, default=None, help="PC 웹캠일 때 이 집의 센서로 보고 (없으면 첫 집)")
     ap.add_argument("--debug", action="store_true", help="판정 근거(vision_debug/emotion_debug) 이벤트 + 낙상 스냅샷")
     ap.add_argument("--log-dir", default=None, help="낙상 스냅샷 저장 폴더 (logs/)")
+    ap.add_argument("--record-dir", default=None, help="폰 프레임을 mp4 로 녹화할 폴더 (logs/) — 2분 단위, 최근 15개 보관")
     args = ap.parse_args()
 
     import cv2
@@ -124,7 +164,9 @@ def main() -> None:
     def home(h):
         if h not in homes:
             snap = os.path.join(args.log_dir, f"home_{h}") if args.log_dir else None
-            homes[h] = HomeVision(h, cfg, tracker, debug=args.debug, snap_dir=snap)
+            rec = os.path.join(args.record_dir, f"home_{h}") if args.record_dir else None
+            homes[h] = HomeVision(h, cfg, tracker, debug=args.debug, snap_dir=snap, record_dir=rec,
+                                  record_fps=args.fps if args.fps > 0 else 10.0)
         return homes[h]
 
     stop = threading.Event()
@@ -146,6 +188,8 @@ def main() -> None:
             elif c == "stop":
                 break
         stop.set()
+        for hv in homes.values():
+            hv._close_record()
 
     threading.Thread(target=stdin_loop, daemon=True).start()
     interval = 1.0 / args.fps if args.fps > 0 else 0

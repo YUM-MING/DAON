@@ -133,3 +133,17 @@ UI의 10초 카운트다운과 `alert_timeout_sec`를 맞출 것.
 - `FallDetector.motion_state(now)` → `"moving" | "still" | None`. 키포인트 이동량 기반 움직임 유무. 레이더가 없을 때 융합의 `motion` 입력으로 쓴다.
 - `FallDetector.lower_body_visible(pose)`.
 - 통합 서버 워커(`server/workers/vision_worker.py`)는 포즈 추적기를 공유하고 집마다 FallDetector/EmotionRecognizer 를 둔다. 디버그 모드에서 1초마다 판정 근거(속도·종횡비·각도)를 내보내고 낙상 순간 프레임을 저장한다.
+
+
+## 9. 2026-10-20 추가 — 표정 2층 구조(mood) 와 7종 모델 (LABELS.md 4절)
+
+- 표정 모델을 AIHub 7종(happy/neutral/sad/angry/anxious/surprised/hurt)으로 재학습 (Training 분할 40~50대 52,497장).
+  60세 이상 983장 평가: 7종 0.775 / 5종 접은 정확도 0.796 (이전 5종 모델 0.666). 무표정→슬픔 누수 45/156 → 4/156.
+- `src/mood.py MoodEstimator`: 순간 표정을 30초 창에서 집계해 **기분(mood) 8종** 으로 내보낸다
+  (happy/calm/sad/anxious/angry/surprised/tired/unknown). 부정 기분은 비율·확신·3초 지속·개인 기준선 초과를 모두 넘겨야 한다.
+  설정은 `src/config.py MoodConfig`.
+- 새 이벤트: `expression_debug`(분류마다), `mood_pred`(1초), `mood_changed`(변화 시). 기존 `emotion` 이벤트는 그대로 나가되
+  mood 에서 파생된다 (`label` 5종 + `mood` 필드 추가; anxious 는 `fear` 로). 서버·대화 모듈은 수정 없이 동작.
+- `EmotionRecognizer.process(frame, pose, now=)` 에 시각을 넘기고, 얼굴이 없는 프레임에서는 `tick(now)` 를 호출할 것
+  (5초 이상 얼굴이 없으면 mood=unknown). `SilverCareVision.process_frame` 결과에 `mood` 가 추가됨.
+- 학습·평가 도구(train.py, scripts/, tests/)와 데이터는 저장소에 없음 (담당자 보관, `D:\DAON\vision_dev`).

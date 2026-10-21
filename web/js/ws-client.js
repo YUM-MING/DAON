@@ -60,6 +60,9 @@
   // 로봇 얼굴 정책: 눈 모양은 상태(듣기/말하기/긴급) 가 기준. 감지된 어르신 감정은 happy 일 때만 같이 웃고,
   // sad/angry 는 얼굴에 그대로 비추지 않는다 (우울한 어르신에게 우울한 얼굴을 보여 주지 않기 위해). 배지에는 표시.
   const MIRROR = { happy:"happy", neutral:"neutral" };
+  // mood 8종 배지 문구 (얼굴은 happy/calm 만 따라가고, 부정 기분·피곤은 배지로만 — LABELS.md 7절)
+  const MOOD_BADGE = { happy:"기쁨", calm:"평온", sad:"슬픔(감지)", anxious:"불안(감지)", angry:"화남(감지)",
+                       surprised:"놀람", tired:"피곤(감지)", unknown:"얼굴 없음" };
   let curState = null, curText = null, curEmotion = null, cdTimer = null;
 
   function showCountdown(sec){
@@ -101,12 +104,15 @@
   function onRobot(m){
     if(m.type !== "state") return;
     const emo = UI_EMOTION[m.emotion] || "neutral";
-    if(emo !== curEmotion){
-      curEmotion = emo;
-      if(typeof log === "function") log(`어르신 표정 감지: ${m.emotion} (raw=${m.emotion_raw||"-"} conf=${m.emotion_conf ?? "-"})`);
+    const moodKey = m.mood ? `${emo}/${m.mood}` : emo;       // 비전 v2 부터 state 에 mood(8종) 가 같이 온다 (LABELS.md 7절)
+    if(moodKey !== curEmotion){
+      curEmotion = moodKey;
+      if(typeof log === "function") log(`어르신 기분 감지: ${m.mood || m.emotion} (표정=${m.emotion_raw||"-"} conf=${m.mood_conf ?? m.emotion_conf ?? "-"})`);
       const badge = document.getElementById("emotionBadge");
       if(MIRROR[emo] && typeof setEmotion === "function") setEmotion(MIRROR[emo]);
-      else if(badge) badge.textContent = ({sad:"슬픔(감지)", angry:"화남(감지)"})[emo] || emo;
+      if(badge && !MIRROR[emo]){
+        badge.textContent = MOOD_BADGE[m.mood] || ({sad:"슬픔(감지)", angry:"화남(감지)"})[emo] || emo;
+      } else if(badge && m.mood && MOOD_BADGE[m.mood]) badge.textContent = MOOD_BADGE[m.mood];
     }
     const text = m.text || "";
     const stateChanged = m.state !== curState;

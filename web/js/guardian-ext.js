@@ -55,7 +55,7 @@
           <label class="eval-toggle"><input type="checkbox" id="sensorLogToggle" checked> 표시</label></div>
         <div class="row" style="gap:14px; flex-wrap:wrap; font-size:13px;" id="sensorNow">
           <span>포즈: <b id="snPose">-</b></span><span>자세: <b id="snPosture">-</b></span><span>낙상 상태: <b id="snFall">-</b></span>
-          <span>표정: <b id="snEmo">-</b></span><span>소리: <b id="snAudio">-</b></span><span>레이더: <b id="snRadar">-</b></span>
+          <span>표정: <b id="snEmo">-</b></span><span>기분: <b id="snMood">-</b></span><span>소리: <b id="snAudio">-</b></span><span>레이더: <b id="snRadar">-</b></span>
         </div>
         <div class="dev-log mt8" id="sensorLog"></div>
         <p class="muted mt8" style="font-size:12px;">낙상 오탐이면 "속도·종횡비·각도" 값을, 표정 오류면 "raw·conf·얼굴px" 를, 음성 오류면 "소리 분류·STT" 줄을 보고 조정합니다. 파일: <code>logs/${home.code}/</code></p>
@@ -78,9 +78,19 @@
           addLog(m.pred === "fall" ? "fall" : "", `${ts} 포즈 ${m.pred}(${m.conf}) 자세=${m.posture} 상태=${m.fall_state} 속도=${m.median_vel} 종횡비=${m.aspect} 각도=${m.torso_angle} 사람conf=${m.person_conf} 급락=${m.drop_recent} 누움=${m.lying_sec}s`);
           break;
         case "emotion":
-          set("snEmo", `${m.label} (${m.raw} ${m.conf}, 얼굴 ${m.face_px}px)`);
-          addLog("emo", `${ts} 표정 ${m.label} raw=${m.raw} conf=${m.conf} 얼굴=${m.face_px}px${m.stable ? " ✔안정→전송" : ""}`);
+          set("snEmo", `${m.expression || m.raw} (${m.conf}, 얼굴 ${m.face_px}px)`);
+          addLog("emo", `${ts} 표정 ${m.expression || m.raw} conf=${m.conf} 얼굴=${m.face_px}px → 기분 ${m.mood || "-"}`);
           break;
+        case "mood": {   // 1초마다: 상태 칸만 갱신 (로그는 바뀔 때만)
+          const d = m.detail || {};
+          set("snMood", `${m.pred} (${m.conf}${d.intensity ? ", " + d.intensity : ""}${d.baseline_ready ? ", 기준선✔" : ""})`);
+          break;
+        }
+        case "mood_changed": {
+          const d = m.detail || {};
+          addLog("emo", `${ts} 😊 기분 → ${m.pred} conf=${m.conf} 안정=${d.stability} 주표정=${d.top_expression} 기준선차=${d.baseline_delta ?? "-"} 얼굴=${d.face_px}px`);
+          break;
+        }
         case "audio":
           set("snAudio", `${m.label} ${m.conf} (낙상확률 ${m.p_fall})${m.muted ? " 🔇" : ""}`);
           if(m.label !== "ambient" || m.p_fall >= 0.3) addLog(m.label === "fall" ? "fall" : "", `${ts} 소리 ${m.label}(${m.conf}) P(fall)=${m.p_fall}${m.muted ? " [TTS중 음소거]" : ""}`);

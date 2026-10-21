@@ -20,7 +20,16 @@
 4. 카메라만 낙상일 때 20초(MEDIUM 10초×2) → 15초 목표면 `response_timeout`/`max_asks` 조정 또는 포즈 단독 HIGH 검토. 비전이 이제 `motion` 을 주므로 레이더 없이도 still/moving 이 들어온다.
 5. 보호자 확인 후 발화 문장을 `responses.py` 에서 생성. `pose_pred/audio_pred` 형식을 직접 받는 입력 어댑터 (TUNING_GUIDE 4절).
 
-### 이유민 (비전·웹·통합) — 진행 중
+### 라벨 표준 (2026-10-19 공유) — 전원
+- **[LABELS.md](LABELS.md) / `labels.json` 이 라벨·필드 이름의 기준.** 담당자별 할 일은 LABELS.md 5절(정연)·6절(혜원)·7절(웹). 반대 의견 없으면 v1.0 으로 확정.
+- 혜원: `ALIASES["emotion"]` 에 calm→neutral, anxious→fear, hurt→sad, tired→neutral 추가 (4줄). 장기적으로 tired 정식 값.
+- 정연: `audio_pred{pred,conf,detail.label}` 0.5초 주기, `ts`(epoch 초), 충격음 클래스 이름 `impact`, 무음 `silence`.
+- 웹: `state.mood`(8종) 가 같이 옴 → `EMOTION_LABEL` 8종 확장 (ws-client 에 임시 배지 표 `MOOD_BADGE` 있음).
+
+### 이유민 (비전·웹·통합) — 진행 중 (2026-10-20)
+- 완료(로컬, 미푸시): 표정 7종 재학습(60+ 983장 0.796, 무표정→슬픔 45→4/156), 기분(mood) 집계층 `modules/vision/src/mood.py`,
+  서버 워커·조정자·대시보드에 mood 연결, 폰 프레임 녹화(`config.yaml vision.record`) → `logs/home_N/cam_*.mp4`.
+- 다음: 낙상 촬영(프로토콜 `vision_dev/docs/fall_recording_protocol.md`) → `scripts/eval_fall.py --sweep` 로 phone 프로파일 재보정 → 비전 일괄 푸시.
 - 완료: 폰 프로파일(`phone_config`), 하반신 가시성 게이트, 카메라 기반 `motion` 이벤트(`FallDetector.motion_state`), 낙상 스냅샷, 웹 목업 제거·실데이터 연결.
 - 다음: 실폰 스냅샷(`logs/home_N/fall_*.jpg`)으로 폰 프로파일 재보정, 폰 전면 카메라 각도에서 표정 얼굴 크기 확보(전송 해상도 480x360 검토), 시나리오별 데이터 수집(각 10회)으로 카메라 단독 vs 융합 그래프.
 

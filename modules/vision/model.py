@@ -56,19 +56,24 @@ class SilverCareVision:
 
         emotion_out = None
         if pose is not None:
-            r = self.emotion.process(frame_bgr, pose)
+            r = self.emotion.process(frame_bgr, pose, now=now)
             if r is not None:
                 emotion_out = {
                     "label": r[0],
                     "raw": self.emotion.last_raw,
+                    "expression": self.emotion.last_expression,
                     "conf": round(r[1], 3),
                 }
+        else:
+            self.emotion.tick(now)      # 얼굴이 오래 없으면 mood=unknown
+        mood = self.emotion.mood.current
 
         return {
             "present": pose is not None,
             "posture": posture,
             "pose": {"pred": pred, "conf": round(conf, 2)},
             "emotion": emotion_out,
+            "mood": {"pred": mood["pred"], "conf": mood["conf"]} if mood else None,
             "fall_state": self.fall.state.value,
         }
 

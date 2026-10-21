@@ -40,6 +40,7 @@ class Coordinator:
         # 로봇 얼굴 상태
         self.ui_state, self.emotion, self.text, self.countdown = "sleep", "neutral", "", None
         self.emotion_raw, self.emotion_conf = None, None
+        self.mood, self.mood_conf = None, None          # 비전 mood 8종 (LABELS.md 4.2)
         self._last_debug_pose = 0.0
         self.speaking, self.utterance_id, self._speak_deadline = False, 0, None
         self._thinking_until = self._recover_until = self._wake_until = None
@@ -75,8 +76,9 @@ class Coordinator:
             bus.subscribe(t, fn)
         # 실시간 센서 로그 (보호자 대시보드 '실시간 센서 로그' 카드): 워커/모듈 디버그 이벤트를 그대로 중계
         for t in ("vision_debug", "emotion_debug", "audio_debug", "audio_fall", "speech", "voice_unclear",
-                  "fall_detected", "radar", "dialogue_output"):
+                  "fall_detected", "radar", "dialogue_output", "mood_pred", "mood_changed"):
             bus.subscribe(t, self._relay_debug)
+        bus.subscribe("mood_pred", self.on_mood)
 
     def _initial_dev(self, module: str) -> str:
         m = self.ctx.mode(module)
@@ -101,6 +103,7 @@ class Coordinator:
     def _push_state(self, speak: bool = False) -> None:
         msg = {"type": "state", "state": self.ui_state, "emotion": self.emotion,
                "emotion_raw": self.emotion_raw, "emotion_conf": self.emotion_conf,
+               "mood": self.mood, "mood_conf": self.mood_conf,
                "text": self.text, "countdown": self.countdown}
         if speak:
             self.utterance_id += 1
@@ -161,12 +164,19 @@ class Coordinator:
             self._absent_since = now
 
     def on_emotion(self, ev) -> None:
+        """비전 `emotion` (구 규약 5종 라벨; 비전 v2 부터는 mood 에서 파생돼 들어온다)."""
         label = ev.label
         self.emotion_raw, self.emotion_conf = ev.get("raw"), ev.get("confidence")
+        if ev.get("mood"):
+            self.mood = ev.get("mood")
         if label != self.emotion:
             self.emotion = label
             self._push_state()
-            self._record("emotion", {"label": label, "confidence": ev.get("confidence")}, ev.ts)
+            self._record("emotion", {"label": label, "confidence": ev.get("confidence"), "mood": ev.get("mood")}, ev.ts)
+
+    def on_mood(self, ev) -> None:
+        """비전 `mood_pred` (1초 주기, LABELS.md 4.2) — 상태 메시지에 실어 UI 가 배지로 쓴다."""
+        self.mood, self.mood_conf = ev.pred, ev.get("conf")
 
     def on_audio_fall(self, ev) -> None:
         self.audio_fall_at, self.audio_fall_conf = ev.ts, float(ev.get("confidence", 0.0))
@@ -284,7 +294,7 @@ class Coordinator:
 
     def _relay_debug(self, ev) -> None:
         kind = {"vision_debug": "vision", "emotion_debug": "emotion", "audio_debug": "audio",
-                "dialogue_output": "dialogue"}.get(ev.type, ev.type)
+                "dialogue_output": "dialogue", "mood_pred": "mood", "mood_changed": "mood_changed"}.get(ev.type, ev.type)
         if ev.type == "dialogue_output":
             if not ev.get("response_text") and ev.get("strategy") == "NONE":
                 return

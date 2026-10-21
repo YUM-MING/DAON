@@ -18,6 +18,8 @@ class VisionAdapter(WorkerAdapter):
         args = ["--source", str(m.get("source", "phone")), "--fps", str(m["fps"]), "--log-dir", config["logs"]["dir"]]
         if m.get("debug", True):
             args.append("--debug")
+        if m.get("record", False):
+            args += ["--record-dir", config["logs"]["dir"]]     # logs/home_N/cam_*.mp4 (낙상 재보정용 녹화)
         super().__init__(bus_for, "vision", WORKERS / "vision_worker.py", MODULES / "vision", args)
 
     def attach_home(self, rt) -> None:

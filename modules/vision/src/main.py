@@ -67,7 +67,7 @@ def main() -> None:
             posture = fall.update(pose, frame.shape[0], now=now)
 
             if pose is not None:
-                result = emotion.process(frame, pose)
+                result = emotion.process(frame, pose, now=now)
                 if result is not None:
                     last_emotion = result[0]
 

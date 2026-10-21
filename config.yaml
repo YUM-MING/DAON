@@ -13,6 +13,7 @@ modules:
     source: phone      # phone(로봇 폰 카메라, 기본) | 0 (PC 웹캠 인덱스) | 영상 파일 경로
     fps: 10            # 폰이 보내는 프레임 상한 (서버 처리 부하 조절)
     debug: true        # 판정 근거(속도·종횡비·각도·표정 raw/conf)를 대시보드 '실시간 센서 로그'로 + 낙상 순간 스냅샷 logs/home_N/
+    record: true       # 폰 카메라 프레임을 logs/home_N/cam_*.mp4 로 녹화 (2분 단위, 최근 15개 보관) → 낙상 임계값 재보정·오탐 분석
   audio:
     mode: worker       # worker | mock | off
     source: phone      # phone(로봇 폰 마이크, 기본) | mic (PC 마이크)

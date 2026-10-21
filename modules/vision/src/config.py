@@ -3,7 +3,7 @@
 낙상 판별 임계값은 카메라 높이/각도에 따라 달라지므로,
 로봇 디자인(카메라 시점) 확정 후 실측으로 튜닝할 것.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -66,6 +66,50 @@ class EmotionConfig:
     # 파인튜닝 모델 경로 (train.py 산출물). 존재하면 HSEmotion 대신 사용
     custom_model_path: str = "./weights/emotion_finetuned.onnx"
     custom_labels_path: str = "./weights/emotion_labels.json"
+    # 분류 1회마다 expression_debug 이벤트 발행 (학습 데이터 수집·튜닝용. 부하는 작지만 로그가 많음)
+    publish_expression: bool = True
+    # 2층 '기분(mood)' 집계 설정 (LABELS.md 4.2)
+    mood: "MoodConfig" = field(default_factory=lambda: MoodConfig())
+
+
+@dataclass
+class MoodConfig:
+    """순간 표정(expression) → 기분(mood) 집계 규칙. 값의 근거는 LABELS.md 4.2.
+
+    부정 기분(sad/anxious/angry)은 비율·확신·지속 세 조건을 모두 넘겨야 내보낸다.
+    무표정이 슬픔으로 새는 문제를 모델(7종 재학습)과 이 게이트 두 겹으로 막는다.
+    """
+    window_sec: float = 30.0            # 집계 창
+    pred_interval_sec: float = 1.0      # mood_pred 발행 주기
+    min_samples: int = 3                # 창 안 표본이 이보다 적으면 판단 보류(이전 값 유지)
+    unknown_after_sec: float = 5.0      # 이 시간 동안 얼굴이 없으면 unknown
+    # 부정 기분 게이트
+    negative_ratio_min: float = 0.5
+    negative_conf_min: float = 0.6
+    negative_sustain_sec: float = 3.0
+    # 상처(hurt)는 무표정과 겹친다 (7종 평가에서 neutral 23장 중 4장이 hurt로) → 더 높은 확신일 때만 sad 로 센다
+    hurt_conf_min: float = 0.7
+    # 얼굴이 이보다 작으면(px) 표본으로 세지 않는다 — 원거리 40px 얼굴에서 conf 0.2 짜리 판정이 기분을 정하지 않게
+    min_face_px: int = 48
+    # 긍정·놀람 (기쁨도 확신 하한을 둔다: 멀리서 흐릿한 happy 로 로봇이 따라 웃지 않게)
+    happy_ratio_min: float = 0.4
+    happy_conf_min: float = 0.5
+    surprised_ratio_min: float = 0.5
+    surprised_window_sec: float = 5.0   # 놀람은 짧은 창으로 본다
+    # 개인 기준선: 처음 baseline_sec 동안의 표정 분포를 '평소 얼굴'로 저장.
+    # 부정 기분은 기준선 대비 초과분(excess)이 baseline_excess_min 이상이어야 인정
+    # (평소 입꼬리가 처진 분은 sad 비율이 늘 높게 나오므로)
+    baseline_sec: float = 120.0
+    baseline_min_samples: int = 20
+    baseline_excess_min: float = 0.25
+    # 피곤(tired): 분류기가 아니라 규칙. 고개 숙임(코-어깨 상대 위치)이 기준선보다 tired_droop_delta 이상
+    # 낮아진 채 tired_sustain_sec 지속, 또는 창 안 눈 감김 비율 ≥ tired_eye_closed_ratio (눈 감김 신호가 있을 때만)
+    tired_droop_delta: float = 0.25
+    tired_sustain_sec: float = 10.0
+    tired_eye_closed_ratio: float = 0.3
+    # 확신 구간 → intensity
+    intensity_mid: float = 0.6
+    intensity_high: float = 0.8
 
 
 @dataclass

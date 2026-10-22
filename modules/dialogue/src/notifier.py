@@ -63,9 +63,22 @@ def _label(cause: str, responded: bool):
     return CAUSES.get(cause, CAUSES["no_response"])
 
 
+# 환경 위험 (DialogueOutput.hazard): 알림 JSON 필드는 그대로 두고 제목·본문 문장에만 위험 종류를 넣는다
+HAZARD_LABEL = {"gas": "가스 누출 의심", "fire": "화재 의심", "smoke": "연기 발생", "burning": "타는 냄새"}
+
+
 def build_emergency(out, now: float) -> AlertMessage:
     label, desc = _label(out.alert_cause, out.user_responded)
-    if out.alert_status == "updated":
+    hazards = [HAZARD_LABEL.get(k, k) for k in (getattr(out, "hazard", "") or "").split(",") if k]
+    if hazards:
+        label = "·".join(hazards)
+        desc = (f"어르신이 {', '.join(hazards)} 상황을 말씀하셨어요. 로봇이 대피 안내를 하고 있어요. "
+                "바로 연락해 주세요.")
+    if out.alert_status == "updated" and hazards:
+        origin = _label(out.alert_origin, False)[0]
+        title = f"[실버케어 긴급 갱신] {label}"
+        head = f"새 위험 정보가 추가됐어요. 현재 위험: {', '.join(hazards)} (처음 알림: {origin}). {desc}"
+    elif out.alert_status == "updated":
         origin = _label(out.alert_origin, False)[0]
         title = f"[실버케어 긴급 갱신] {label}"
         head = f"상황이 바뀌었어요: {origin} → {label}. {desc}"
@@ -229,10 +242,13 @@ class AlertDispatcher:
 
     def dispatch(self, out, now: float) -> list:
         results = []
+        # 사건 번호(없으면 0 = 이전 형식): 중복 판단을 사건 단위로 한다. 엔진이 외부에서 _end_safety()로
+        # 해제돼 resolved가 여기로 오지 않아도, 그 뒤의 새 비상은 번호가 달라 중복으로 막히지 않는다.
+        incident = getattr(out, "alert_incident", 0) or 0
         if out.emergency:
-            results += self._send(build_emergency(out, now), now)
+            results += self._send(build_emergency(out, now), now, incident)
         if getattr(out, "alert_status", "") == "resolved":
-            results += self._send(build_resolved(out, now), now)
+            results += self._send(build_resolved(out, now), now, incident)
             self._recent.clear()                   # 사건 종료: 이후 새 비상은 중복으로 보지 않는다
         if out.notice:
             results += self._send(build_notice(out, now), now)
@@ -244,18 +260,20 @@ class AlertDispatcher:
         return [self._deliver(n, m, rounds + 1) for m, n, rounds in pending]
 
     # --- 내부 ---
-    def _send(self, msg: AlertMessage, now: float) -> list:
-        if self._duplicate(msg, now):
+    def _send(self, msg: AlertMessage, now: float, incident: int = 0) -> list:
+        if self._duplicate(msg, now, incident):
             return []
         return [self._deliver(n, msg) for n in self.notifiers]
 
-    def _duplicate(self, msg: AlertMessage, now: float) -> bool:
+    def _duplicate(self, msg: AlertMessage, now: float, incident: int = 0) -> bool:
         if msg.kind == "notice":
             if self._last_notice is not None and now - self._last_notice < self.notice_cooldown:
                 return True
             self._last_notice = now
             return False
-        key = (msg.cause, msg.seq)
+        # 창이 지난 기록은 버린다 (사건 번호가 계속 늘어나도 쌓이지 않게)
+        self._recent = {k: t for k, t in self._recent.items() if now - t < self.dedup_window}
+        key = (incident, msg.cause, msg.seq)
         last = self._recent.get(key)
         if last is not None and now - last < self.dedup_window:
             return True

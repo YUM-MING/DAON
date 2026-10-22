@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
+from context import FLOOR_POSES
 from dialogue_types import RiskLevel
 
 
@@ -15,6 +17,10 @@ class Situation:
     emotion_intensity: float = 0.0                 # 0.0 ~ 1.0
     trigger: str = ""                              # fall | lying | fall_persist | utterance (안전 확인 원인)
     mismatch: bool = False                         # 표정은 부정, 발화는 괜찮다
+    soft_pain: bool = False                        # 위험 신호·센서 근거 없는 일상 통증 → 공감·되묻기 (to_dict에는 넣지 않음)
+    sound_only: bool = False                       # 낙상음만 있고 바닥 자세·발화 근거 없음 (to_dict에는 넣지 않음)
+    sound: Optional[tuple] = None                  # 근거로 쓴 낙상음 (ts, conf)
+    pose_evidence: bool = False                    # 낙상 포즈 또는 누운 자세 근거가 있음
 
     def to_dict(self) -> dict:
         return {"risk_score": self.risk_score, "risk_level": self.risk_level.name,
@@ -57,10 +63,18 @@ def assess(inp, sig, ctx, cfg) -> Situation:
 
     # --- 위험도: 신호별 점수(확신도 비례) + 교차 검증 ---
     cp, cs, cl = conf_of("fall_pose", "낙상 포즈"), conf_of("fall_sound", "낙상음"), conf_of("lying_pose", "누운 자세")
+    sound = ctx.last_sound(now) if cs else None
+    held = None
+    if not cs and (cp or cl):
+        # 소리 단독 확인에 쓴 낙상음(확인 중·종료 뒤 보류 시간 안): 바닥 자세가 따라오면 함께 근거로 쓴다 (D-2)
+        held = ctx.held_sound(now)
+        if held:
+            cs, sound = held[1], held
     if cp:
         pts = round(w["fall_pose"] * f(cp)); score += pts; ev.append(f"낙상 포즈(+{pts}{tag(cp)})")
     if cs:
-        pts = round(w["fall_sound"] * f(cs)); score += pts; ev.append(f"낙상음(+{pts}{tag(cs)})")
+        pts = round(w["fall_sound"] * f(cs)); score += pts
+        ev.append(f"낙상음(+{pts}{tag(cs)}" + (f", {int(now - held[0])}초 전 소리 단독 확인 근거)" if held else ")"))
     if cp and cs:
         pts = round(w["pose_sound_agree"] * f(min(cp, cs))); score += pts; ev.append(f"포즈·소리 일치(+{pts})")
     elif cs and cl:
@@ -80,7 +94,7 @@ def assess(inp, sig, ctx, cfg) -> Situation:
         else:
             score += w["unknown_motion"]; ev.append(f"움직임 정보 없음({w['unknown_motion']})")
 
-    if ctx.lying_still_secs(now) >= cfg.lying_still_secs:
+    if ctx.lying_due(now):                 # 누움 확인에 괜찮다고 한 뒤면 재확인을 lying_recheck_after_ok_secs 뒤로 (D-4)
         score += w["prolonged_lying"]
         ev.append(f"누운 채 {int(ctx.lying_still_secs(now))}초 무동작(+{w['prolonged_lying']})")
     fall_persist = ctx.fall_persist_secs(now)               # 움직임이 있어도 일어나지 않았으면 다시 확인
@@ -89,10 +103,17 @@ def assess(inp, sig, ctx, cfg) -> Situation:
         ev.append(f"확인 후에도 바닥 자세 {int(fall_persist)}초 지속(+{w['prolonged_fall']})")
 
     has_severe = sig.distress == "severe" or sig.self_harm
+    # 일상 통증은 센서 근거(낙상 포즈·소리·누움·바닥 자세 지속)가 전혀 없을 때만 점수에 넣지 않는다
+    soft_pain = (sig.distress == "mild" and sig.pain_soft and score == 0
+                 and ctx.last["pose"] not in FLOOR_POSES)
     if sig.self_harm:
         score += w["self_harm"]; ev.append("극단적 선택 암시 발화(즉시 비상)")
     elif sig.distress == "severe":
-        score += w["utter_severe"]; ev.append("위험 발화(즉시 비상)")
+        score += w["utter_severe"]
+        ev.append(f"환경 위험 발화({', '.join(sig.hazard_kinds)}, 즉시 비상)" if sig.hazard_level == "current"
+                  else "위험 발화(즉시 비상)")
+    elif soft_pain:
+        ev.append("일상 통증 호소(위험 증상·센서 근거 없음 → 공감·되묻기)")
     elif sig.distress == "mild":
         score += w["utter_mild"]; ev.append(f"위험 의심 발화(+{w['utter_mild']})")
     if sig.reports_fall:
@@ -106,11 +127,11 @@ def assess(inp, sig, ctx, cfg) -> Situation:
     trigger = ""
     if cp or cs:
         trigger = "fall"
-    elif ctx.lying_still_secs(now) >= cfg.lying_still_secs:
+    elif ctx.lying_due(now):
         trigger = "lying"
     elif fall_persist >= cfg.fall_recheck_secs:
         trigger = "fall_persist"
-    elif sig.distress == "mild" or sig.reports_fall:
+    elif (sig.distress == "mild" and not soft_pain) or sig.reports_fall:
         trigger = "utterance"
 
     # --- 정서: 표정(확신도 반영) + 발화 융합 ---
@@ -140,4 +161,8 @@ def assess(inp, sig, ctx, cfg) -> Situation:
         if ctx.negative_streak:
             ev.append(f"부정 발화 연속 {ctx.negative_streak}회 반영")
 
-    return Situation(score, level, ev, valence, intensity, trigger, mismatch)
+    sound_only = (bool(cs) and not held and not cp and not cl and trigger == "fall"
+                  and sig.distress == "none" and not sig.self_harm and not sig.reports_fall
+                  and not ctx.lying_due(now) and fall_persist < cfg.fall_recheck_secs)
+    return Situation(score, level, ev, valence, intensity, trigger, mismatch, soft_pain,
+                     sound_only, sound, bool(cp or cl))

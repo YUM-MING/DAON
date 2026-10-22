@@ -56,6 +56,18 @@ class Config:
     fall_repeat_gap: float = 30.0  # 바닥 자세(fall/lying)가 이 간격 안에 이어서 들어오면 같은 낙상 사건으로 본다(초)
     recover_secs: float = 3.0  # 낙상 후 normal 자세가 이 시간 이상 이어져야 '일어남'으로 본다(초, 프로토타입 기본값)
     fall_recheck_secs: float = 120.0  # 확인 후에도 바닥 자세가 이 시간 이상 이어지면 다시 확인(초, 프로토타입 기본값)
+    # 소리 단독 충격 (D): 낙상음만 있고 바닥 자세(fall/lying) 근거가 없을 때
+    sound_pose_fresh_secs: float = 10.0  # 낙상음 전후 이 시간 안의 정상 자세 관측만 '가벼운 확인' 근거로 인정(초). 무응답 종료 때도 마지막 정상 관측이 이 안이어야 함
+    sound_evidence_hold_secs: float = 60.0  # 소리 단독 확인 중·종료 뒤 이 시간 안에 바닥 자세가 오면 소리 근거를 합쳐 기존 낙상 경로로 승격(초)
+    sound_recheck_cooldown_secs: float = 60.0  # 소리 단독 확인이 괜찮다는 대답·보호자 해제로 끝난 뒤, 정상 자세가 보이는 소리 단독 재확인을 보류(초)
+    lying_recheck_after_ok_secs: float = 300.0  # 누움 확인에서 괜찮다고 한 뒤 다음 누움 무동작 재확인까지(초)
+    sound_dup_window_secs: float = 5.0  # 안전 확인 시작 직후 이 시간 안에 따로 도착한 낙상 자세 근거는 질문을 다시 하지 않고 단계·시한만 조정(초)
+    # 선택적 LLM (환경변수 DIALOGUE_LLM으로만 켜짐, 일상·공감 문장에만)
+    llm_max_chars: int = 90  # LLM 문장 최대 길이(자). 넘으면 템플릿
+    llm_min_hangul: float = 0.6  # LLM 문장의 한글 비율 하한
+    llm_history_turns: int = 8  # 프롬프트에 넣는 최근 대화 턴 수
+    llm_breaker_failures: int = 3  # 연속 실패 횟수 → 서킷 브레이커
+    llm_breaker_secs: float = 60.0  # 서킷 브레이커가 열려 있는 시간(초, 그동안 템플릿만)
     emotion_ttl: float = 60.0  # 표정 감정 이벤트 유효시간(초)
     min_confidence: float = 0.4  # 모델 확신도가 이보다 낮은 신호는 무시
     full_confidence: float = 0.9  # 이 이상이면 확신도 100%와 같은 점수
@@ -87,6 +99,9 @@ class Config:
     topic_repeat_for_followup: int = 3  # 같은 주제 호소 N회 → 되묻기
     recent_window: int = 6  # 최근 N개 응답과 같은 문장은 피함
     streak_for_notice: int = 5  # 부정 발화 연속 N회 → 보호자 정서 알림(비상 아님)
+    # 일상 통증 (위험 신호 없는 "머리가 좀 아프네")
+    symptom_repeat_secs: float = 600.0  # 같은 증상을 이 시간 안에 다시 호소하면 안전 확인(초)
+    pain_question_secs: float = 60.0  # "견딜 만하세요?" 질문에 대한 대답으로 보는 시간(초)
 
 
 # ───────────── 입력값 정규화 ─────────────
@@ -145,6 +160,11 @@ ALIASES = {  # 인식 모듈(포즈·표정·환경음 등)이 다른 표기로 
         "surprised": "neutral",
         "중립": "neutral",
         "평온": "neutral",
+        # 비전 mood 8종 (LABELS.md 4.2·6절, vision/src/mood.py MOOD_TO_LEGACY와 같은 매핑)
+        "calm": "neutral",
+        "anxious": "fear",
+        "hurt": "sad",      # 1층 expression '상처' → 2층 mood에서 sad로 합침
+        "tired": "neutral",  # 임시: 정식 값으로 넣을지는 추후 결정 (LABELS.md 6절)
     },
     "sound_event": {
         "fall": "fall_sound",
@@ -312,6 +332,12 @@ class DialogueOutput:
     warnings: list = field(default_factory=list)  # 입력값 문제(알 수 없는 라벨 등)
     response_deadline_sec: Optional[float] = None  # 안전 확인 질문 후 응답을 기다리는 시간(초). UI 카운트다운용
     emergency_active: bool = False  # 비상 알림 발생 후 해제 전까지 매 턴 True (UI의 '현재 비상 중' 표시용)
+    alert_incident: int = 0  # 비상 사건 번호 (엔진마다 1부터, raised마다 증가). 알림 출력·해제 출력에만, 0=없음
+    hazard: str = ""  # 이번 비상 사건의 환경 위험 종류 ("gas", "fire,smoke" …). 비상 알림 출력에만, 없으면 ""
+    check_level: str = ""  # light: 소리 단독 + 정상 자세의 '가벼운 확인' 중(또는 그 무응답 종료) | "": 그 밖
+    response_source: str = "template"  # 응답 문장 출처: template | llm
+    llm_ms: Optional[int] = None  # LLM 응답에 걸린 시간(ms). LLM을 부르지 않았거나 시간 초과면 None
+    llm_fallback_reason: Optional[str] = None  # LLM을 쓰려다 템플릿으로 대체한 이유 (timeout·trigger·medical 등), 없으면 None
 
     def to_dict(self) -> dict:
         d = asdict(self)

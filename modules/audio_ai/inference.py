@@ -151,9 +151,24 @@ def emit(obj: dict) -> None:
 class SpeechToText:
     """faster-whisper 래퍼. 모델이 없으면 비활성 상태로 동작한다."""
 
+    #   로봇 이름은 학습 데이터에 없는 고유명사라 whisper 가 음이 비슷한 흔한 낱말로
+    #   바꿔 버린다. 측정(2026-10-23, 세션 1): "다온아" 가 들어간 6문장이 전부 실패
+    #   했다 — 가우나 / 가운아 / 다운아 / 다화 / 하워나. 정답이 0번 나왔다.
+    #   혜원님 모듈은 부름을 글자 그대로 본다(CALL_WORDS, CALL_PREFIXES)라서
+    #   "다운아" 는 매칭되지 않는다 — 불러도 부른 것으로 인식되지 않는다.
+    #
+    #   hotwords 로 이름을 알려주면 0/6 → 4/6 이 되고, 전체 CER 은 오히려
+    #   25.9% → 25.4% 로 좋아졌다. 지연은 발화당 +0.1초.
+    #
+    #   낱말을 여러 개 넣으면 안 된다. "다온아 다온이 다온" 으로 주면 이름은
+    #   6/6 이 되지만 모델이 그 낱말만 반복하는 환각에 빠진다(CER 134.5%).
+    #   근거: DAON_patch/이름인식_결과_stt_quiet_base.txt
+    HOTWORDS = "다온"
+
     def __init__(self, model_size: str = STT_MODEL, enabled: bool = True):
         self.model = None
         self.model_size = model_size
+        self._hotwords_ok = True        # faster-whisper 1.0+ 여부. 첫 호출에서 확인한다
         if not enabled:
             return
         try:
@@ -168,11 +183,18 @@ class SpeechToText:
     def transcribe(self, wav: np.ndarray) -> str:
         if self.model is None:
             return ""
-        segments, _ = self.model.transcribe(
-            wav, language="ko", beam_size=1, vad_filter=True,
-            # 어르신 발화는 느리고 쉼이 길어 기본값보다 여유를 둔다
-            no_speech_threshold=0.5,
-        )
+        kw = dict(language="ko", beam_size=1, vad_filter=True,
+                  # 어르신 발화는 느리고 쉼이 길어 기본값보다 여유를 둔다
+                  no_speech_threshold=0.5)
+        if self.HOTWORDS and self._hotwords_ok:
+            kw["hotwords"] = self.HOTWORDS
+        try:
+            segments, _ = self.model.transcribe(wav, **kw)
+        except TypeError:
+            # faster-whisper 1.0 미만에는 hotwords 가 없다. 한 번 겪으면 다시 쓰지 않는다.
+            self._hotwords_ok = False
+            kw.pop("hotwords", None)
+            segments, _ = self.model.transcribe(wav, **kw)
         return " ".join(s.text.strip() for s in segments).strip()
 
 

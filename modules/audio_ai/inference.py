@@ -62,6 +62,16 @@ FALL_REFRACTORY_SEC = 5.0         # 한 번 알린 뒤 이 시간 동안은 중�
 SPEECH_THRESHOLD = 0.50
 SILENCE_SEC = 1.0                 # 이 시간만큼 말이 없으면 발화 종료로 보고 STT 실행
 MAX_UTTERANCE_SEC = 15.0
+#   발화 버퍼는 창이 speech 로 분류된 뒤에야 담기 시작한다. 창이 1초, hop 이
+#   0.5초이므로 말이 시작된 뒤 최대 0.5초가 버려지고, 거기에 첫 낱말이 들어 있다.
+#   측정(2026-10-23, 세션 1): 18문장 중 9문장만 첫 어절이 맞았다(전체 CER 25.4%).
+#   앞을 PREROLL_SEC 만큼 더 담고, 그중 말이 시작되기 전의 죽은 구간만 잘라내면
+#   첫 어절 15/18, 로봇 이름 6/6, CER 14.2% 가 되고 발화 길이는 +6% 에 그친다.
+#   (앞자름 없이 1초를 통째로 붙이면 길이가 +28% 늘고 CER 도 17.8% 에 머문다)
+#   근거: DAON_patch/프리롤_결과_stt_quiet_base.txt
+PREROLL_SEC = 1.0                 # 발화 앞에 더 담을 길이. 0 이면 끈다
+PREROLL_TRIM_LEVEL = 0.01         # 이 진폭을 넘으면 말이 시작된 것으로 본다
+PREROLL_TRIM_LEAD = 0.2           # 그 지점 앞으로 남겨 둘 여유 (초)
 VOICE_UNCLEAR_MIN_SEC = 0.8       # 사람 소리는 났는데 말로 인식되지 않은 최소 길이
 #   STT 모델 크기. benchmark.py 로 base / small 을 같은 한국어 문장으로 비교한 결과,
 #   받아쓰기 정확도는 차이가 없는데 base 가 3배 빨랐다 (고정 지연 0.7초 vs 2.3초).
@@ -148,6 +158,21 @@ def emit(obj: dict) -> None:
     print(json.dumps(obj, ensure_ascii=False), flush=True)
 
 
+def _trim_front(wav: np.ndarray) -> np.ndarray:
+    """말이 시작되기 전의 빈 구간을 잘라낸다 (앞으로 PREROLL_TRIM_LEAD 초만 남긴다).
+
+    앞을 1초 더 담으면 첫 낱말은 살지만 whisper 에 넣는 길이가 그만큼 늘어난다.
+    그 1초의 대부분은 폰 AEC 가 눌러 놓은 빈 구간이므로 걷어내도 손해가 없다.
+    기준을 넘는 샘플이 하나도 없으면(아주 조용한 발화) 그대로 둔다.
+    """
+    if wav.size == 0 or PREROLL_SEC <= 0:
+        return wav
+    idx = np.nonzero(np.abs(wav) > PREROLL_TRIM_LEVEL)[0]
+    if idx.size == 0:
+        return wav
+    return wav[max(0, int(idx[0]) - int(PREROLL_TRIM_LEAD * SAMPLE_RATE)):]
+
+
 class SpeechToText:
     """faster-whisper 래퍼. 모델이 없으면 비활성 상태로 동작한다."""
 
@@ -224,6 +249,9 @@ class AudioRouter:
         self.fall_refractory_sec = fall_refractory_sec
         self.fall_min_peak = fall_min_peak
         self._fall_hist: deque[float] = deque(maxlen=self.fall_k)   # 최근 K개 P(fall)
+        # 발화 시작 직전의 hop 들. 첫 낱말이 잘리지 않게 앞에 붙인다 (PREROLL_SEC)
+        self._preroll: deque[np.ndarray] = deque(
+            maxlen=max(1, int(np.ceil(PREROLL_SEC / HOP_SEC))))
         self._last_fall_t = -1e9          # 마지막 낙상 알림 시각
         self.speech_buf: list[np.ndarray] = []
         self.silence = 0.0
@@ -323,6 +351,9 @@ class AudioRouter:
                            "reason": "too_quiet", "rms": round(rms, 5),
                            "time": round(self._now - self.t0, 2)})
             return
+        # 앞에 붙인 구간 중 말이 시작되기 전의 빈 부분만 걷어낸다.
+        # 길이·음량 판정은 걷어내기 **전**의 버퍼로 한다 (기존 동작을 바꾸지 않기 위해).
+        wav = _trim_front(wav)
         if self._stt_q is not None:
             self._stt_q.put((wav, self._now))   # 별도 스레드로 넘기고 바로 복귀
         else:
@@ -333,6 +364,8 @@ class AudioRouter:
         t: 이 윈도우의 시각. None 이면 self.clock() 을 쓴다."""
         self._now = self.clock() if t is None else t
         self.windows += 1
+        pre = list(self._preroll)        # 이 창보다 앞선 hop 들 (아래에서 발화 앞에 붙인다)
+        self._preroll.append(hop)
 
         # ---- 무음 게이트 -----------------------------------------------------
         # 학습 분포 밖(디지털 무음)의 입력은 모델에 넣지 않는다. 넣으면 아무 값이나
@@ -379,6 +412,10 @@ class AudioRouter:
             # 낙상 직후에는 "괜찮으세요?" 응답을 받아야 하므로 음성 버퍼를 비우지 않는다
 
         if label == "speech" and conf >= self.speech_threshold:
+            if not self.speech_buf and pre and PREROLL_SEC > 0:
+                # 발화가 막 시작됐다. 분류가 끝나기 전에 흘러간 앞부분을 되살린다.
+                want = int(PREROLL_SEC * SAMPLE_RATE)
+                self.speech_buf.append(np.concatenate(pre)[-want:])
             self.speech_buf.append(hop)
             self.silence = 0.0
             if sum(len(b) for b in self.speech_buf) > MAX_UTTERANCE_SEC * SAMPLE_RATE:

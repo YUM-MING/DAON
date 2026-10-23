@@ -42,6 +42,13 @@ HOP_SEC = 0.5                     # 분류 간격
 #   낙상은 놓치는 쪽이 더 위험하고 뒤에 포즈 교차검증과 음성 확인이 있으므로
 #   재현율을 우선했다. 근거: outputs/threshold_val.txt
 FALL_THRESHOLD = 0.60
+#   낙상 이벤트를 내기 위한 최소 진폭. 0.0 이면 끈다.
+#   무음 게이트(SILENCE_PEAK=0.002)는 디지털 무음만 막는다. 폰 AEC 가 남기는
+#   아주 작은 잔향(peak 0.02~0.034)은 디지털 무음이 아니라 게이트를 통과하는데,
+#   모델은 그런 입력을 배운 적이 없어 P(fall) 0.87~0.98 을 내놓는다 (실측 6건).
+#   같은 녹음들에서 진짜 충격음의 최소 peak 은 0.072 로 2.1배 떨어져 있다.
+#   data/realworld 회귀: 재현율 29/30 그대로, 오탐 알림 5회 → 3회.
+FALL_MIN_PEAK = 0.05
 #   판정 규칙: 최근 FALL_K 개 윈도우를 어떻게 볼지. eval_threshold.py 로 고른 값.
 #   K=1 이면 윈도우 하나만 보고 판정한다(가장 빠름).
 #   낙상음은 0.2~0.5초로 짧아 윈도우 하나에만 담기는 경우가 많으므로,
@@ -181,6 +188,7 @@ class AudioRouter:
                  speech_threshold: float = SPEECH_THRESHOLD,
                  fall_k: int = FALL_K, fall_rule: str = FALL_RULE,
                  fall_refractory_sec: float = FALL_REFRACTORY_SEC,
+                 fall_min_peak: float = FALL_MIN_PEAK,
                  clock=None, stt_async: bool = False):
         self.model = model
         self.stt = stt
@@ -192,6 +200,7 @@ class AudioRouter:
         self.fall_k = max(1, int(fall_k))
         self.fall_rule = fall_rule
         self.fall_refractory_sec = fall_refractory_sec
+        self.fall_min_peak = fall_min_peak
         self._fall_hist: deque[float] = deque(maxlen=self.fall_k)   # 최근 K개 P(fall)
         self._last_fall_t = -1e9          # 마지막 낙상 알림 시각
         self.speech_buf: list[np.ndarray] = []
@@ -338,6 +347,7 @@ class AudioRouter:
 
         now = self._now
         if (score >= self.fall_threshold
+                and float(np.abs(window).max()) >= self.fall_min_peak
                 and now - self._last_fall_t >= self.fall_refractory_sec):
             self._last_fall_t = now
             self.emit({"type": "fall", "confidence": round(p_fall, 3),

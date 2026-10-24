@@ -103,6 +103,10 @@ vision.fall.notify_response()   # 긴급 알림 카운트다운 취소 + fall_re
   미탐은 주로 "카메라 정면 방향 낙상"(원근 단축), 오탐은 "바닥·침대에 빠르게 눕기"
   — 둘 다 카메라 단독의 원리적 한계로, 레이더·소리 융합과 uncertain 판정의 근거.
   실제 로봇 환경(HD 근거리)에서는 이보다 좋을 것으로 예상, 카메라 각도 확정 후 재보정 필요.
+- **2026-10-24 폰 프로파일 재보정 (480x360, `--profile phone`)**: GMDCSA-24(160) + CAUCAFall(100) + UR Fall(70) 합산
+  **F1 0.782 / R 0.755 / P 0.811** (데이터셋별 0.813 / 0.769 / 0.727). 이전 폰값은 합산 0.70. 임계값 조정 없이 다른 환경
+  LE2I(298) F1 0.846, 가려짐 전용 OCCU(113) 0.832('급락 후 소실' 규칙을 끄면 0.224). 남은 미탐은 카메라 축 방향 낙상(원근 단축)·침대 위로 쓰러짐·즉시 기립, 오탐은 운동·소파에서
+  일어나기. `scripts/eval_fall.py --data a,b,c --profile phone --resize 480x360 [--sweep] [--set KEY=VALUE]`.
 
 ## 6. 표정 모델 파인튜닝 (완료됨)
 
@@ -133,6 +137,15 @@ UI의 10초 카운트다운과 `alert_timeout_sec`를 맞출 것.
 - `FallDetector.motion_state(now)` → `"moving" | "still" | None`. 키포인트 이동량 기반 움직임 유무. 레이더가 없을 때 융합의 `motion` 입력으로 쓴다.
 - `FallDetector.lower_body_visible(pose)`.
 - 통합 서버 워커(`server/workers/vision_worker.py`)는 포즈 추적기를 공유하고 집마다 FallDetector/EmotionRecognizer 를 둔다. 디버그 모드에서 1초마다 판정 근거(속도·종횡비·각도)를 내보내고 낙상 순간 프레임을 저장한다.
+
+## 9. 2026-10-24 추가 (낙상 재보정)
+
+- `phone_config()` 값 재보정 (위 5절). `FallConfig.lost_after_drop_sec` (폰 3.0초): 급락 직후 사람이 사라져 3초 이상 안 보이면
+  `fall_detected` 에 `confidence 0.6, reason "drop_then_lost"` 가 실린다 (일반 확정은 0.9, reason 없음). 사라진 동안 `pose_pred` 는
+  `uncertain 0.6` 으로 나가 융합이 다른 센서로 결정한다.
+- `vision_debug` 에 `lower_body`(하반신 보임 여부)·`note`("하반신 미확인 → 판정 보류 …") 추가. 오디오팀 로그의 "자세 정보 없음"은
+  상반신만 찍혀 보류된 것이지 오탐이 아니다. 대시보드 센서 로그에 그대로 표시.
+- 워커 `--profile auto|default|phone`: 폰으로 녹화한 mp4 를 파일 소스로 재생할 때 `--profile phone` 으로 맞춘다.
 
 
 ## 9. 2026-10-20 추가 — 표정 2층 구조(mood) 와 7종 모델 (LABELS.md 4절)

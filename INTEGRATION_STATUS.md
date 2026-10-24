@@ -26,10 +26,13 @@
 - 정연: `audio_pred{pred,conf,detail.label}` 0.5초 주기, `ts`(epoch 초), 충격음 클래스 이름 `impact`, 무음 `silence`.
 - 웹: `state.mood`(8종) 가 같이 옴 → `EMOTION_LABEL` 8종 확장 (ws-client 에 임시 배지 표 `MOOD_BADGE` 있음).
 
-### 이유민 (비전·웹·통합) — 진행 중 (2026-10-20)
-- 완료(로컬, 미푸시): 표정 7종 재학습(60+ 983장 0.796, 무표정→슬픔 45→4/156), 기분(mood) 집계층 `modules/vision/src/mood.py`,
+### 이유민 (비전·웹·통합) — 2026-10-25
+- 완료(푸시): 표정 7종 재학습(60+ 983장 0.796, 무표정→슬픔 45→4/156), 기분(mood) 집계층 `modules/vision/src/mood.py`,
   서버 워커·조정자·대시보드에 mood 연결, 폰 프레임 녹화(`config.yaml vision.record`) → `logs/home_N/cam_*.mp4`.
-- 다음: 낙상 촬영(프로토콜 `vision_dev/docs/fall_recording_protocol.md`) → `scripts/eval_fall.py --sweep` 로 phone 프로파일 재보정 → 비전 일괄 푸시.
+- 완료(푸시): 낙상 폰 프로파일 재보정 — 공개 데이터 3종(GMDCSA-24·CAUCAFall·UR Fall, 330클립) sweep, 합산 F1 0.70 → 0.78.
+  '급락 후 3초 소실' 보조 신호(`reason: drop_then_lost`, conf 0.6), `vision_debug.note`(하반신 미확인 보류 안내), 워커 `--profile`.
+  다른 각도 벤치마크(LE2I 0.85 / 가려짐 OCCU 0.83 / EDF 0.77 / UP_Fall 정면·MCFD 천장 어안은 2D 포즈 규칙으로 불가) → `vision_dev/docs/fall_benchmark_omnifall_2026-10-24.md`.
+- 미완: 유민 리허설 녹화(데모 2-2 '천천히 미끄러짐')로 실측 확인. 녹화하면 `vision_dev/data/phone_falls/` 에 넣고 같은 스크립트로 평가.
 - 완료: 폰 프로파일(`phone_config`), 하반신 가시성 게이트, 카메라 기반 `motion` 이벤트(`FallDetector.motion_state`), 낙상 스냅샷, 웹 목업 제거·실데이터 연결.
 - 다음: 실폰 스냅샷(`logs/home_N/fall_*.jpg`)으로 폰 프로파일 재보정, 폰 전면 카메라 각도에서 표정 얼굴 크기 확보(전송 해상도 480x360 검토), 시나리오별 데이터 수집(각 10회)으로 카메라 단독 vs 융합 그래프.
 
@@ -95,7 +98,7 @@ python -m pytest server\tests -q      REM 10개 (시나리오 + 계정/DB)
 ### 이유민 (비전)
 1. 폰 모드는 `PoseTracker` 공유 + 집마다 `FallDetector`/`EmotionRecognizer` 를 직접 조립한다 (`server/workers/vision_worker.py HomeVision`). `SilverCareVision` 에 "추적기 공유" 옵션이 있으면 서버가 내부 조립을 안 해도 됨.
 2. 움직임 유무(키포인트 이동량)를 `motion` 이벤트로 내보내면 레이더 없이도 대화 모듈 `motion` 입력에 쓸 수 있음.
-3. 폰 전면 카메라(근거리, 320x240 전송)에서 낙상 임계값 재보정 필요.
+3. 폰 전면 카메라 낙상 임계값: 공개 데이터로 재보정 완료(2026-10-24). 실폰 녹화로 최종 확인만 남음.
 
 ### 웹앱 (이제 우리가 수정 — 유진 파트에서 넘겨받음)
 - 적용 완료: 서버 모드에서 8초 자동 데모·9초 레이더 끊김 데모 생략, `setState` countdown 옵션, 로봇 연결 해제 버튼(🛠 패널), 헤더 반응형, 실시간 센서 로그 카드.
@@ -118,5 +121,5 @@ python -m pytest server\tests -q      REM 10개 (시나리오 + 계정/DB)
 ## 6. 다음 단계
 
 1. **실폰 검증**: 터널 주소로 폰 접속 → 카메라·마이크 권한 → 대시보드 기기 상태 ok → 말하기 → 넘어지기. 안 되는 지점의 터미널 로그와 폰 화면 좌하단 전송량 표시를 보고 조정.
-2. **정확도**: 비전 UR Fall F1 0.687 → 폰 근거리 재보정 / 음성 오탐 2/15(의자 끌기) / 대화 키워드 규칙 / 융합 지연(레이더 또는 비전 motion 으로 15초 보장).
+2. **정확도**: 비전 폰 프로파일 재보정 완료(3종 합산 F1 0.78, UR Fall 단독 0.687 → 0.727) / 음성 오탐 2/15(의자 끌기) / 대화 키워드 규칙 / 융합 지연(레이더 또는 비전 motion 으로 15초 보장).
 3. **레이더**: USB-TTL 로 PC 연결 후 `radar.mode: worker`, 포트 지정.

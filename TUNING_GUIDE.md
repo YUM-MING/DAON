@@ -45,7 +45,8 @@
 | 11:48 (113초) | 99/224 (44%) | 8/224 (4%) | 무음 구간이 낙상음으로 찍히던 것 제거 |
 | 11:50 (113초) | 10/225 (4%) | 5/225 (2%) | '대화' 창 111→20: 거의 무음인 창을 분류기가 '대화'로 보던 것도 같이 걸러짐 → whisper 환각 문장 원인 |
 - 폰: 마이크 캡처를 AudioWorklet(오디오 스레드)로 교체, 자동 볼륨(AGC) 끔, 마이크 트랙 mute/unmute 로그, 화면 복귀 시 오디오 재개. `?raw=1` 로 에코 제거까지 끈 원음 실험 가능.
-- 비전: 폰 전용 프로파일 `phone_config()` (속도 0.7, 종횡비 1.4, 확정 1.5초 등) + **하반신 가시성 게이트** (엉덩이+무릎/발목이 안 보이면 자세 unknown → 낙상 보류). 서버가 `source: phone` 이면 자동 적용. UR Fall 기본값은 그대로.
+- 비전: 폰 전용 프로파일 `phone_config()` + **하반신 가시성 게이트** (엉덩이+무릎/발목이 안 보이면 자세 unknown → 낙상 보류). 서버가 `source: phone` 이면 자동 적용. UR Fall 기본값은 그대로.
+  2026-10-23~24 공개 데이터(GMDCSA-24·CAUCAFall·UR Fall, 330클립) sweep 으로 재보정: 속도 0.35 / 종횡비 1.25 / 각도 65 / 확정 1.0초 / 전환 2.0초 / 하반신 필수 / '급락 후 3초 소실' 보조 신호. 합산 F1 0.70 → 0.78. 상세는 `vision_dev/docs/fall_benchmark_omnifall_2026-10-24.md`.
 - 로봇 🛠 패널에 **🔊 TTS 테스트** 버튼 — 폰에서 목소리가 실제로 나오는지, 한국어 음성이 있는지 바로 확인.
 
 **정연 파트에 추가로 넘길 것**: (a) 무음/거의 무음 창을 모듈 안에서 걸러 달라 (학습 데이터에 무음이 없어 OOD 로 fall 이 나옴), (b) 폰 녹음 wav 2개로 base/small whisper 비교, (c) 클리핑된 입력에 대한 정규화(피크 노멀라이즈) 검토.
@@ -123,15 +124,21 @@ class EmotionConfig:
 | `사람conf` | 0.7+ | 0.5 근처 | 부분 가림·역광 |
 | `급락=True 누움=0.6s` | — | 이 조합 뒤 `상태=fallen` | 위 둘이 겹침 |
 
-**바로 조정할 값 (`modules/vision/src/config.py FallConfig`)** — 근거리 폰 기준 추천 시작값
+**폰 프로파일 현재 값 (`modules/vision/src/config.py phone_config()`, 2026-10-24 재보정)** — UR Fall 기본값 → 폰
 ```python
-drop_velocity_threshold = 0.45   # → 0.7  (가까우면 작은 움직임도 큰 속도로 보임)
-lying_aspect_ratio      = 1.1    # → 1.4  (상반신만 보일 때 납작한 박스 오판 방지)
+drop_velocity_threshold = 0.45   # → 0.35 (공개 데이터 330클립 sweep. 0.7 이었을 때 GMDCSA 재현율 0.61 로 너무 많이 놓침)
+soft_drop_velocity      = 0.25   # → 0.4  (서있음→누움 급전환 보조 신호의 속도 조건)
+lying_aspect_ratio      = 1.1    # → 1.25 (상반신만 보일 때 납작한 박스 오판 방지)
 lying_torso_angle_deg   = 55.0   # → 65
-fallen_confirm_sec      = 0.5    # → 1.5  (누운 자세가 1.5초 이어져야 확정)
+fallen_confirm_sec      = 0.5    # → 1.0  (누운 자세가 1초 이어져야 확정)
+standing_to_lying_sec   = 1.2    # → 2.0  (천천히 미끄러지는 낙상 대비)
 min_person_conf         = 0.5    # → 0.6
 drop_memory_sec         = 3.0    # → 2.0
+require_lower_body_for_lying = True   # 하반신 안 보이면 보류 (unknown)
+lost_after_drop_sec     = 0.0    # → 3.0  (급락 직후 사람이 3초 이상 사라지면 낙상, conf 0.6, reason drop_then_lost)
 ```
+오탐이 많으면 `drop_velocity_threshold` 를 0.45 로, 놓침이 많으면 `fallen_confirm_sec` 0.5 / `soft_drop_velocity` 0.25 로
+(sweep 최고 재현율 조합, 대신 오탐 28→40). 바꾼 뒤 `python scripts/eval_fall.py --data ... --profile phone --resize 480x360` 으로 확인.
 바꾼 뒤 서버 재시작 없이 워커만 다시 뜨게 하려면 서버를 재시작하는 게 가장 간단하다.
 
 **구조적 보완 (우리 비전 쪽에서 가능)**

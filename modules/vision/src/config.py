@@ -52,6 +52,10 @@ class FallConfig:
     # 폰을 가까이 두면 상반신만 잡혀 bbox 가 납작해지고(종횡비↑) 서 있어도 '누움'으로 오판한다 (2026-10-18 실측).
     # True 면 하반신이 안 보일 때 posture="unknown" 으로 두고 낙상 판정을 보류한다.
     require_lower_body_for_lying: bool = False
+    # '급락 후 소실' 보조 낙상 신호 (LABELS.md 2절): 급락(drop_memory_sec 내) 직후 사람이 화면에서 사라져
+    # 이 시간(초) 이상 보이지 않으면 fall_detected (근거리에서 넘어져 화면 밖/카메라 아래로 사라지는 경우).
+    # 0 이면 끔. 켜도 current_pred 는 사라진 동안 uncertain 으로 융합에 넘긴다.
+    lost_after_drop_sec: float = 0.0
 
 
 @dataclass
@@ -129,17 +133,33 @@ def phone_config() -> AppConfig:
     """로봇 폰 전면 카메라(근거리, 320x240 전송) 프로파일.
 
     UR Fall(원거리) 기준 기본값은 근거리에서 오탐이 많다: 작은 움직임이 큰 '속도'로 보이고,
-    상반신만 보이면 bbox 가 납작해 '누움'으로 본다. 실측 후 다시 조정할 것 (TUNING_GUIDE.md 3절).
+    상반신만 보이면 bbox 가 납작해 '누움'으로 본다.
+
+    2026-10-23 재보정: GMDCSA-24(집·노트북 웹캠·책상 높이, 낙상 79/일상 81) + UR Fall(70) 을 480x360 으로
+    합산 sweep (scripts/eval_fall.py --sweep, 1,080 조합). 이전 값(속도 0.7)은 GMDCSA 재현율 0.61 로 낙상을
+    너무 많이 놓쳤다 → 속도 0.35. 하반신 필수는 유지(근거리 오탐 보호). 확정 1.0초·전환 2.0초는 재현율/오탐
+    중간값(데모 2-2 '천천히 미끄러짐' 대비). 결과: GMDCSA F1 0.805 (R 0.76 / P 0.86), UR Fall F1 0.727.
+    남은 미탐은 '침대 위로 쓰러짐'·'바닥에 앉았다 뒤로 넘어짐'(엉덩이 하강이 거의 없음) — 규칙 구조의 한계.
+
+    2026-10-24 CAUCAFall(100) 합류 + '급락 후 소실' 보조 신호: 3종 330클립 합산 F1 0.782 (R 0.755 / P 0.811, FP 28;
+    GMDCSA 0.813 / UR Fall 0.727 / CAUCA 0.769). 이전 폰값(속도 0.7)은 합산 0.70. 조정 없이 LE2I(298) F1 0.846, 가려짐 OCCU(113) 0.832 (소실 규칙 끄면 0.224).
+    카메라 축 방향 낙상(원근 단축: UP_Fall 정면, EDF)·천장 어안(MCFD)은 2D 포즈 규칙으로 안 됨 —
+    '높이 붕괴' 보조 신호·'하반신 조건 근거리 한정' 변형을 시험했으나 정면에서 오탐이 늘거나 효과가 없어 불채택.
+    상세: vision_dev/docs/fall_benchmark_omnifall_2026-10-24.md
     """
     fall = FallConfig(
-        drop_velocity_threshold=0.7,
+        drop_velocity_threshold=0.35,
         soft_drop_velocity=0.4,
-        lying_aspect_ratio=1.4,
+        lying_aspect_ratio=1.25,
         lying_torso_angle_deg=65.0,
-        fallen_confirm_sec=1.5,
+        fallen_confirm_sec=1.0,
+        standing_to_lying_sec=2.0,
         min_person_conf=0.6,
         drop_memory_sec=2.0,
         require_lower_body_for_lying=True,
+        # 급락 후 3초 이상 소실 → 낙상 (CAUCAFall 재현율 0.60→0.70, GMDCSA 0.76→0.77, UR Fall 오탐 증가 없음.
+        # 1~2초로 줄이면 UR Fall 에서 '물건 줍고 화면 밖으로' 오탐이 늘어남)
+        lost_after_drop_sec=3.0,
     )
     emotion = EmotionConfig(min_face_size=48, stable_count=3)
     return AppConfig(pose=PoseConfig(), fall=fall, emotion=emotion)

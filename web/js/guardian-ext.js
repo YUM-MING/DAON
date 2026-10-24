@@ -74,8 +74,8 @@
       const m = e.detail, ts = t(m.ts);
       switch(m.kind){
         case "vision":
-          set("snPose", `${m.pred} ${m.conf}`); set("snPosture", m.posture); set("snFall", m.fall_state);
-          addLog(m.pred === "fall" ? "fall" : "", `${ts} 포즈 ${m.pred}(${m.conf}) 자세=${m.posture} 상태=${m.fall_state} 속도=${m.median_vel} 종횡비=${m.aspect} 각도=${m.torso_angle} 사람conf=${m.person_conf} 급락=${m.drop_recent} 누움=${m.lying_sec}s`);
+          set("snPose", `${m.pred} ${m.conf}`); set("snPosture", m.note ? `${m.posture} (${m.note})` : m.posture); set("snFall", m.fall_state);
+          addLog(m.pred === "fall" ? "fall" : "", `${ts} 포즈 ${m.pred}(${m.conf}) 자세=${m.posture}${m.note ? " ⚠ " + m.note : ""} 상태=${m.fall_state} 속도=${m.median_vel} 종횡비=${m.aspect} 각도=${m.torso_angle} 사람conf=${m.person_conf} 하반신=${m.lower_body} 급락=${m.drop_recent} 누움=${m.lying_sec}s`);
           break;
         case "emotion":
           set("snEmo", `${m.expression || m.raw} (${m.conf}, 얼굴 ${m.face_px}px)`);

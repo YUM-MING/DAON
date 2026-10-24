@@ -48,6 +48,7 @@ class FallDetector:
         self._fallen_since: float | None = None    # 낙상 확정 시각
         self._last_motion_time: float = 0.0
         self._prev_keypoints: np.ndarray | None = None
+        self._absent_since: float | None = None    # 사람이 안 보이기 시작한 시각 ('급락 후 소실' 판정용)
 
     # ---------- 자세 판정 ----------
 
@@ -80,9 +81,14 @@ class FallDetector:
             # 사람이 안 보임. 낙상 상태에서 사라지면 상태 유지 (가려짐일 수 있음)
             self._last_hip_y = None
             self._prev_keypoints = None
+            if self._absent_since is None:
+                self._absent_since = now
+            if self.state == FallState.MONITORING:
+                self._check_lost_after_drop(now)
             self._check_alert(now)
             return "unknown"
 
+        self._absent_since = None
         posture = self.posture(pose)
         self._update_scale(pose)
         self._update_drop(pose, now)
@@ -195,6 +201,24 @@ class FallDetector:
             self._last_motion_time = now
             self.bus.publish("fall_detected", confidence=0.9)
 
+    def _drop_then_lost(self, now: float) -> bool:
+        """급락 직후(drop_memory_sec 내)에 사람이 사라진 상태인지."""
+        return (
+            self._absent_since is not None
+            and self._last_drop_time > 0
+            and 0 <= self._absent_since - self._last_drop_time <= self.config.drop_memory_sec
+        )
+
+    def _check_lost_after_drop(self, now: float) -> None:
+        """보조 낙상 신호: 급락 후 소실이 lost_after_drop_sec 지속 → fall_detected (설정이 0 이면 끔)."""
+        if self.config.lost_after_drop_sec <= 0 or not self._drop_then_lost(now):
+            return
+        if now - self._absent_since >= self.config.lost_after_drop_sec:
+            self.state = FallState.FALLEN
+            self._fallen_since = now
+            self._last_motion_time = now
+            self.bus.publish("fall_detected", confidence=0.6, reason="drop_then_lost")
+
     def _check_alert(self, now: float) -> None:
         if self.state != FallState.FALLEN or self._fallen_since is None:
             return
@@ -219,6 +243,8 @@ class FallDetector:
         if self.state in (FallState.FALLEN, FallState.ALERTED):
             return "fall", 0.9
         drop_seen = self._last_drop_time > 0
+        if self._drop_then_lost(now):
+            return "uncertain", 0.6  # 급락 후 소실 — 카메라 밖으로 넘어졌을 수 있음, 다른 센서가 결정
         if (
             drop_seen
             and self._lying_since is not None

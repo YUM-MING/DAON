@@ -50,7 +50,7 @@
 
 | `type` | 필드 | 뜻 |
 |---|---|---|
-| `fall_detected` | `conf` | 카메라가 낙상을 확정 (급락 + 누움 지속). 로봇 1차 음성 확인 트리거 |
+| `fall_detected` | `conf`, `reason`(선택) | 카메라가 낙상을 확정 (급락 + 누움 지속, conf 0.9). 로봇 1차 음성 확인 트리거. `reason: drop_then_lost` 면 급락 직후 사람이 화면에서 사라져 3초 이상 안 보인 경우(conf 0.6, 폰 프로파일) |
 | `fall_recovered` | — | 기립 또는 응답으로 해제 |
 | `fall_alert` | `elapsed_sec` | 낙상 후 무움직임 10초 → 보호자 알림 |
 
@@ -208,3 +208,4 @@ AIHub "한국인 감정인식을 위한 복합 영상"의 7개 라벨을 그대�
 |---|---|---|
 | v0.1 | 2026-10-18 | 초안 (이유민). 표정 2층 구조, `uncertain` 전달, `ts` 통일, `impact` 명명, `visibility`/`distance` 추가 |
 | v0.2 | 2026-10-19 | mood 층 구현 반영: hurt 보수 처리(conf ≥ 0.7), surprised 표본·확신 조건, 기준선 초과 규칙(`baseline_excess_min` 0.25). 구현: `src/mood.py` |
+| v0.3 | 2026-10-24 | `fall_detected.reason` 추가(`drop_then_lost`, conf 0.6). 폰 프로파일 낙상 임계값 재보정 (공개 데이터 3종 F1 0.78). 구현: `src/fall_detector.py`, `src/config.py phone_config()` |

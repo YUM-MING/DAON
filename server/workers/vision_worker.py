@@ -131,7 +131,13 @@ class HomeVision:
         f = self.fall
         vels = [v for _, v in f._vel_window]
         angle = pose.torso_angle_deg if pose is not None else None
+        # 사람은 보이는데 posture=unknown 이면 하반신(엉덩이+무릎/발목) 미검출로 낙상 판정을 보류한 것
+        # (phone 프로파일 require_lower_body_for_lying). 로그만 보면 '판정 안 함'처럼 보여서 이유를 같이 보낸다.
+        lower_ok = f.lower_body_visible(pose) if pose is not None else None
+        note = ("하반신 미확인 → 판정 보류 (전신이 보이게 거리 2m 이상)"
+                if pose is not None and posture == "unknown" and not lower_ok else "")
         return {"pred": pred, "conf": round(conf, 2), "posture": posture, "fall_state": f.state.value,
+                "lower_body": lower_ok, "note": note,
                 "median_vel": round(float(np.median(vels)), 3) if len(vels) >= 3 else None,
                 "aspect": round(float(pose.aspect_ratio), 2) if pose is not None else None,
                 "torso_angle": round(float(angle), 1) if angle is not None else None,
@@ -149,6 +155,9 @@ def main() -> None:
     ap.add_argument("--debug", action="store_true", help="판정 근거(vision_debug/emotion_debug) 이벤트 + 낙상 스냅샷")
     ap.add_argument("--log-dir", default=None, help="낙상 스냅샷 저장 폴더 (logs/)")
     ap.add_argument("--record-dir", default=None, help="폰 프레임을 mp4 로 녹화할 폴더 (logs/) — 2분 단위, 최근 15개 보관")
+    ap.add_argument("--profile", choices=["auto", "default", "phone"], default="auto",
+                    help="낙상 임계값 프로파일. auto = 폰 소스면 phone, 그 외 default. "
+                         "폰으로 녹화한 mp4 를 재생(데모 예비)할 때는 --profile phone 으로 맞출 것")
     args = ap.parse_args()
 
     import cv2
@@ -157,7 +166,9 @@ def main() -> None:
     from src.pose_tracker import PoseTracker
 
     print("[vision] 모델 로딩…", file=sys.stderr)
-    cfg = phone_config() if args.source == "phone" else default_config()   # 근거리 폰 프로파일 (src/config.py)
+    use_phone = args.profile == "phone" or (args.profile == "auto" and args.source == "phone")
+    cfg = phone_config() if use_phone else default_config()   # 근거리 폰 프로파일 (src/config.py)
+    print(f"[vision] 낙상 프로파일: {'phone' if use_phone else 'default'}", file=sys.stderr)
     tracker = PoseTracker(cfg.pose)
     homes: dict[int | None, HomeVision] = {}
 

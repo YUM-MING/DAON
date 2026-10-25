@@ -38,11 +38,13 @@ CAUSE_RANK = {"no_response": 1, "danger": 2, "crisis": 3}     # 비상 중 더 �
 CAUSE_NOTE = {"danger": "위험 발화", "crisis": "극단적 선택 암시"}
 NO_TEXT = TextSignals()        # 센서 근거만 다시 평가할 때 쓰는 빈 발화 신호
 MAX_GENTLE_PROBES = 2          # 조심스러운 되묻기 연속 허용 횟수 (그다음부터는 물러서는 말)
+# 반복·지속 통증을 밝히는 말: 부위를 물은 직후의 대답이라도 기존 재호소 판단을 따른다 ('또'는 낱말 단위로 따로 본다)
+PAIN_REPEAT_MARKS = ("아까도", "아까부터", "계속", "자꾸", "여전히", "아직도", "또다시", "다시아", "잖아", "다니까")
 # 지난 화제를 꺼내도 되는 일상 응답 (시간·식사·약처럼 답할 내용이 있는 말에는 끼어들지 않는다)
 RECALL_KINDS = {"greeting", "generic", "positive", "family", "health", "sleep", "weather"}
 RECALL_WINDOW = 2              # 세션 첫 2턴 안에서만 지난 화제를 꺼낸다 (아래 답변 턴은 세지 않음)
 INFO_KINDS = {"time", "weather_ask", "abilities", "about_ai", "meal", "meal_done", "meal_not", "meal_ask", "medicine",
-              "medicine_missed", "medicine_ask", "medicine_refuse", "date", "date_unknown"}
+              "medicine_missed", "medicine_ask", "medicine_refuse", "date", "date_unknown", "medicine_check"}
 KST = datetime.timezone(datetime.timedelta(hours=9))   # 한국 시간 (서머타임 없음). Windows 기본 환경엔 tz 데이터가 없어 고정 오프셋
 WEEKDAYS_KO = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
 EPOCH_PLAUSIBLE = 1_500_000_000   # 이보다 작은 timestamp는 실제 날짜가 아니다 (테스트·독립 실행의 경과 시간 등)
@@ -255,7 +257,7 @@ class DialogueEngine:
             self.ctx.user_turns += 1
             self._pain_q, self.ctx.pain_question = self.ctx.pain_question, None
             urgent_q, self.ctx.urgent_prompt = self.ctx.urgent_prompt, None
-            self._note_symptoms(sig, now)
+            self._note_symptoms(sig, now, text)
             if not sig.recall_question:                       # 회상 질문에 인용된 증상은 새 기록이 아니다
                 self.ctx.note_dangers(sig.danger_kinds, now)
             self._track_unclear(sig)
@@ -383,6 +385,11 @@ class DialogueEngine:
         c.probe_streak = 0                                # 다른 응답이 오면 되묻기 연속 횟수 초기화
         prev_topic, c.last_topic = c.last_topic, topic    # 직전 턴과 같은 화제인지 (이어가기 응답용)
         c.prev_topic = prev_topic
+        if (c.last_medicine and sig.skip_ask and not sig.medicine_state
+                and sig.distress == "none" and not sig.self_harm):
+            # 직전이 약 이야기일 때 "하루쯤은 걸러도 괜찮지 않을까?": '약'이 없어도 복용 판단 질문 (고정 안내, LLM 금지)
+            sig = dataclasses.replace(sig, medicine=True, medicine_state="ask")
+        c.last_medicine = bool(sig.medicine or sig.medicine_state)
         negative = sit.valence == "negative"
         c.register_user_turn(negative, sig.topics)
 
@@ -398,6 +405,13 @@ class DialogueEngine:
                                    "증상 회상 질문 (이번 대화에서 들은 증상 없음 → 지어내지 않음)")
             return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "recall_symptom", "slots": {"said": said}},
                                "증상 회상 질문 → 이번 대화에서 들은 증상으로 대답")
+        if sit.soft_pain and sig.medicine_state == "check":
+            # "아구.. 허리야.. 나 약 먹었나?": 통증 공감 + 복약 여부는 단정하지 않음 (고정 문장, LLM 금지)
+            part = sig.symptom_parts[0] if sig.symptom_parts else None
+            gen = ({"kind": "medicine_check_pain", "slots": {"part_subj": _josa(part, "이", "가")}} if part
+                   else {"kind": "medicine_check_pain_nopart"})
+            return self._speak(State.EMOTIONAL, Strategy.SMALL_TALK, gen,
+                               "일상 통증 + 복약 여부 질문 → 통증 공감, 복약은 확인할 수 없어 단정하지 않음")
         if sit.soft_pain:                                 # 위험 신호 없는 일상 통증: 공감하고 상태를 묻는다
             part = sig.symptom_parts[0] if sig.symptom_parts else None
             if part is None:
@@ -459,9 +473,27 @@ class DialogueEngine:
         return out
 
     # ───── 이번 대화의 증상 기억 (세션 단위, 장기 기억과 별개) ─────
-    def _note_symptoms(self, sig: TextSignals, now: float) -> None:
+    def _part_answer_notes(self, sig: TextSignals, text: str) -> list:
+        """직전 로봇 말이 부위를 묻는 질문(pain_soft_nopart)이고, 이번이 바로 다음 턴에 부위만 더한 일상 통증일 때
+        그 질문을 낳은 부위 없는 증상 기록들. 위험 증상·심한 정도·반복·지속 표현이 있으면 [] (기존 재호소 판단)"""
+        g = self._last_gen
+        if not (g and g[2].get("kind") == "pain_soft_nopart" and sig.pain_soft and sig.symptom_parts
+                and len(sig.symptom_parts) == 1 and not sig.insist):
+            return []
+        compact = "".join(text.split())
+        if "또" in text.split() or any(k in compact for k in PAIN_REPEAT_MARKS):
+            return []
+        return [s for s in self.ctx.symptoms if s.part is None and s.turn == self.ctx.user_turns - 1]
+
+    def _note_symptoms(self, sig: TextSignals, now: float, text: str = "") -> None:
         """증상 발화를 기억한다. 같은 증상을 10분 안에 다시 말했거나 '했잖아'로 재호소하면 일상 통증에서 뺀다."""
         if not sig.symptom_said:
+            return
+        asked = self._part_answer_notes(sig, text)
+        if asked:
+            # "어디가 아프세요?" 바로 다음 대답 "머리가 아프네": 같은 통증의 부위 설명이지 재호소가 아니다 → 기록에 부위를 채운다
+            for n in asked:
+                n.part = sig.symptom_parts[0]
             return
         if sig.distress == "mild" and (sig.insist or self.ctx.symptom_repeated(sig.symptom_parts, now)):
             sig.pain_soft, sig.pain_repeat = False, True
@@ -674,6 +706,7 @@ class DialogueEngine:
             return "medicine_" + sig.medicine_state
         if sig.medicine: return "medicine"                  # 약 복용은 식사 응답보다 먼저 (식사로 되묻지 않음)
         if sig.meal_state: return "meal_" + sig.meal_state   # 먹었다는 말을 다시 묻지 않고, 안 먹었으면 가볍게 제안
+        if sig.meal_memory: return "meal_memory"            # "옛날에 … 먹었는데": 추억 (방금 식사가 아님)
         if sig.meal: return "meal"
         if sig.discomfort: return "health_ack"              # 이미 말한 불편감은 되묻지 않고 받아준다
         if sig.sleep_bad: return "sleep_bad"                # 잠을 못 잤다는 말은 다시 묻지 않고 받아준다
@@ -856,17 +889,22 @@ class DialogueEngine:
                               "확인 중 부분 호전 표현 → 상태 다시 확인 (낙상·위험 확인은 해제하지 않음, 대기 시간 유지)")
             out.response_deadline_sec = max(0.0, s.timeout - (now - s.asked_at))
             return out
-        if sig.asks_listener:
+        medicine_talk = sig.medicine_state in ("refuse", "missed", "ask", "check") or sig.skip_ask
+        if sig.asks_listener or sig.permission_ask or medicine_talk:
             # 듣는 사람에게 묻거나 부탁하는 높임말("괜찮으세요?", "말씀해 주세요")은 어르신 자신의 상태 대답이 아니다
             # (로봇 질문이 다시 인식된 경우 포함). 모호한 대답으로 세지 않아 이것만으로 확인이 끝나지 않는다.
+            # 허락 질문("누워 있어도 괜찮지 않을까?")·복약 거부·누락·질문("오늘은 약 안 먹을래")도 상태 대답이 아니다:
+            # 같은 절차 (풀지도, 비상으로 올리지도 않음. 위험 응답·괜찮다는 대답은 위에서 기존대로 먼저 판단)
             # 다시 듣기 상한 안에서는 질문을 다시 하고, 그 뒤에는 대기 시간을 이어서 센다 (무응답이면 기존대로 재질문·비상)
+            what = ("상대에게 묻는 높임말" if sig.asks_listener else "허락을 묻는 말" if sig.permission_ask
+                    else "복약 이야기")
             if s.listen_retries < self.cfg.max_listen_retries:
                 s.listen_retries += 1
                 s.asked_at = now
                 return self._waiting(self._speak(State.SAFETY_CHECK, Strategy.REASK, self._reask_ctx(),
-                                                 "확인 중 상대에게 묻는 높임말 → 상태 대답 아님, 질문 다시 하기"))
+                                                 f"확인 중 {what} → 상태 대답 아님, 질문 다시 하기"))
             return DialogueOutput(State.SAFETY_CHECK, Strategy.NONE, None,
-                                  reason="확인 중 상대에게 묻는 높임말 (상태 대답 아님) → 대기 계속")
+                                  reason=f"확인 중 {what} (상태 대답 아님) → 대기 계속")
         if not sig.empty:
             if s.clarified:
                 self._close_safety(now)

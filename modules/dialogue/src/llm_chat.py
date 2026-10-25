@@ -20,11 +20,12 @@ from text_analyzer import robot_speech_flags
 SMALL_TALK_ALLOWED = {
     "greeting", "thanks", "goodnight", "meal", "meal_done", "meal_not", "meal_ask", "boredom", "positive",
     "joy", "joy_family", "joy_health", "weather", "family", "health", "good_day", "tired", "sleep_bad", "sleep",
-    "continue", "continue_family", "generic", "resume_topic",
+    "continue", "continue_family", "generic", "resume_topic", "meal_memory",
 }
 SMALL_TALK_FORBIDDEN = {
     "about_ai", "time", "weather_ask", "abilities", "recall", "back_off", "relieved", "improving", "medicine",
     "health_ack", "wait", "medicine_missed", "medicine_ask", "medicine_refuse", "date", "date_unknown",
+    "medicine_check", "medicine_check_pain", "medicine_check_pain_nopart",
 }
 STT_REASK_ALLOWED = {"stt_retry", "stt_mic"}            # 안전 확인 밖의 일반 재질문만 (재질문 표지가 있어야 통과)
 OTHER_STRATEGIES_ALLOWED = {Strategy.EMPATHIZE, Strategy.FOLLOW_UP, Strategy.GENTLE_PROBE}
@@ -54,6 +55,7 @@ KIND_INTENT = {
     "continue": "같은 화제를 이어 가며 자연스럽게 다음 이야기를 묻기",
     "continue_family": "가족 이야기를 이어 가며 자연스럽게 다음 이야기를 묻기",
     "generic": "말씀에 공감하고 관련된 질문 하나로 대화를 이어 가기",
+    "meal_memory": "추억을 들어주고 공감하며 그 음식에 대해 묻기 (방금 식사하신 것이 아님)",
     "resume_topic": "잘 못 알아들어 다시 여쭌 뒤 다시 말씀하심: 직전 화제를 기억해서 자연스럽게 이어 가기",
     "stt_retry": "말씀을 알아듣지 못함: 내용을 추측해 답하지 말고, 다시 한 번 말씀해 달라고 자연스럽게 부탁하기",
     "stt_mic": "두 번째로 알아듣지 못함: 조금 가까이에서 천천히 말씀해 달라고 부탁하기 (내용 추측 금지)",

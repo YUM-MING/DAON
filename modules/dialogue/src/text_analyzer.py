@@ -73,6 +73,8 @@ MIC_CHECK = {"들려", "들려요", "들리니", "들리나", "들리냐", "들�
              "내말들려", "내말들리니", "내말잘들려", "내말들리지", "내목소리들려", "내목소리잘들려", "내목소리들리니",
              "목소리들려", "목소리잘들려", "제말들려요", "제말들리세요", "제목소리들려요", "제목소리들리세요"}
 BARE_HEAR = {"들려", "들려요", "들리니", "들리나", "들리냐", "들리세요", "들리지"}   # 문맥에 따라 다른 뜻일 수 있음
+# 목소리·말이 들리는지 묻는 문장 전체 ("내 목소리 들리냐", "내 목소리가 들리니", "제 말이 잘 들리나요"). '소리'만 있으면 해당 없음
+MIC_ASK = re.compile(r"(?:내|제)?(?:목소리|말)(?:가|이)?(?:잘)?(?:들려요?|들리(?:니|나|냐|지|세요|나요)|들립니까)")
 REPEAT_ASK = {"뭐라고", "뭐라고요", "뭐라구", "뭐라구요", "뭐라고했어", "뭐라고했어요", "다시말해줘", "다시말해봐",
               "다시말해주세요", "다시한번말해줘", "다시한번말해주세요", "잘못들었어", "못들었어"}
 OK_FUZZY = ("괜찮아", "괜찮아요", "괜찮습니다", "괜찮은데")
@@ -124,6 +126,9 @@ IMPROVE_NEG_AFTER = ("지않", "진않", "지는않", "지도않", "셨", "시",
 LESS_PAIN = re.compile(r"덜(?:아파|아프|아픈|쑤시|쑤셔|저려|저리|결려|결리|어지러|어지럽)(?!지않|진않|지는않|지도않)")
 # "괜찮아지는 것 같아", "괜찮아질 거야": 나아지는 중이라는 말이지 괜찮다는 확답은 아니다 ("괜찮아졌어"는 기존대로 확답)
 OK_IN_PROGRESS = re.compile(r"괜[찮찬챦]아지(?!셨|시|세)[가-힣]*")
+# "괜찮겠지", "아마 괜찮을 거야", "괜찮을 것 같아", "괜찮으려나": 추측이지 지금 괜찮다는 확답이 아니다
+# (위험 발화로 올리지 않고 불명확한 대답으로 둔다. "이제 괜찮아"·"괜찮아졌어"는 기존대로 확답)
+OK_GUESS = re.compile(r"괜[찮찬챦](?:겠|을|으려)")
 # 증상 종류 → 회상 때 되돌려 말할 표현 (앞에 있을수록 우선)
 SYMPTOM_SAID = ((PAIN_WORDS, "아프다고"), (("쑤시", "쑤셔"), "쑤신다고"), (("저리", "저려"), "저리다고"),
                 (("결리", "결려"), "결린다고"), (("뻐근",), "뻐근하다고"), (("시리", "시려"), "시리다고"),
@@ -192,6 +197,7 @@ MEAL = ("밥", "식사", "점심", "저녁", "아침", "배고", "먹었")
 MEAL_ASK = ("먹을까", "먹지", "먹을지", "뭐먹", "뭘먹", "뭐해먹")
 MEAL_NOT = ("안먹", "못먹", "굶", "배고", "거르", "걸렀")
 MEAL_DONE = ("먹었", "식사했", "식사를했")
+MEAL_MEMORY = ("옛날", "예전", "어렸을", "어릴때", "어릴적", "젊었을", "젊을때", "그때", "옛적", "왕년")   # 식사 추억 회상 표지
 MEDICINE = ("약먹", "약을먹", "약은먹", "약도먹", "약챙겨", "약을드", "약복용")   # "약 먹었어"는 식사가 아니라 건강 이야기
 # 약 이야기 (예약·절약·계약·치약 등은 제외): 약 + 먹기·챙기기·거르기·끊기 같은 복용 표현
 # "약 두 개 같이 먹어도 돼?"처럼 사이에 낱말이 조금(4자 이하) 끼어도 본다. "약속", "약간"은 약 이야기가 아님
@@ -199,7 +205,20 @@ MED_CONTEXT = re.compile(r"(?<![예절계공요조치규언비])약(?!속|간)[^
                          r"(?:먹|드|챙|복용|걸러|걸렀|거르|빼먹|깜빡|건너|끊|안먹|안드|못먹|못드|잊|까먹|놓)")
 # 복용 판단 질문 ("안 먹어도 돼?", "같이 먹어도 돼?", "끊어도 되나?", "안먹어도 되려나?")
 MED_ASK = re.compile(r"(?:어도|아도|해도|으면)(?:돼|되|될|괜찮)|되려나|될까|되나|괜찮을까|괜찮나|괜찮은가")
+# 복약 여부 확인 질문 ("약 먹었나?", "먹었는지 기억이 안 나"): 완료 보고가 아니다 → 단정하지 않고 확인하도록 안내
+MED_CHECK = re.compile(r"먹었나|먹었는지|먹었던가|먹었더라|먹었었나|먹었는가|드셨나|복용했나|먹었지(?:\?|$)")
 MED_MISSED = re.compile(r"걸렀|걸러|거르|빼먹|깜빡(?!안|하지않)|못먹|안먹|못드|안드|건너뛰|잊어버|잊었|까먹|놓쳤")
+# 사이 거리와 관계없이 '약' 낱말 (예약·절약·치약·약속·약간·약해(약하다)는 제외) — 누락 동사 + 허락 질문과 함께일 때만 쓴다
+MED_WORD = re.compile(r"(?<![예절계공요조치규언비])약(?!속|간|하|해)")
+# 허락 질문 "~어도 괜찮지 않을까/않겠냐/않나": 앞 낱말이 동사 연결형(~어도)일 때만 (명사+도 "다리도·몸도·나도"는 위험 판단 유지)
+PERMIT_ASK = re.compile(r"도(괜[찮찬챦]지(?:가)?않(?:을까|을지|겠|나(?!봐|보)|냐|니))")
+PERMIT_ENDINGS = ("어", "아", "해", "여", "워", "러", "봐", "써", "줘", "져", "쳐", "겨", "려")
+PERMIT_SHORT = ("봐", "써", "줘")                       # 한 글자만으로도 동사 ("봐도", "써도", "줘도")
+PERMIT_SHORT_BEFORE = ("안", "못", "좀", "그냥", "이렇게", "그렇게", "저렇게", "같이", "더", "덜", "다")   # "안 해도"
+# 끝 글자가 연결형과 같은 명사 ("올해도", "치아도", "영어도"): 허락 질문으로 보지 않는다
+PERMIT_NOUNS = ("올해", "새해", "매해", "피해", "이해", "오해", "방해", "손해", "치아", "영어", "단어", "연어", "숭어",
+                "상어", "문어", "고등어", "오징어", "언어", "국어", "달러", "컬러", "에러", "테러", "고려", "배려",
+                "우려", "염려", "왕겨")
 MED_REFUSE = ("먹기싫", "먹기귀찮", "먹기가싫", "먹기가귀찮", "안먹을래", "안먹고싶", "먹고싶지않", "끊고싶", "귀찮아", "싫어")
 # 고인에 대한 그리움: 그리움 표현 + 고인 표현이 함께 있을 때만 (안전·위기 판정과 무관, 공감 문장만 바뀜)
 MISSING = ("보고싶", "그리워", "그립", "생각나", "생각이나")
@@ -256,7 +275,8 @@ class TextSignals:
     discomfort: bool = False        # "무릎이 쑤셔"처럼 이미 말한 불편감
     tired: bool = False             # "피곤하네", "지쳤어"처럼 피곤하다는 말
     medicine: bool = False          # "약 먹었어", "약 먹을 시간이야"
-    medicine_state: str = ""        # ask(복용 판단 질문) | missed(복약 누락) | refuse(복용 거부) | "" (그 밖·완료)
+    medicine_state: str = ""        # ask(복용 판단 질문) | check(복약 여부 확인 질문) | missed(복약 누락) | refuse(복용 거부) | ""
+    meal_memory: bool = False       # 식사 추억담 ("옛날에 비 올 때 많이 부쳐 먹었는데") — 방금 식사한 것이 아님
     sleep_bad: bool = False         # "잠을 못 자", "잠이 안 와", "잠을 설쳤어"
     sleep_well: bool = False        # "요즘은 잘 자", "푹 잤어" ("잘 못 자"는 아님)
     grief: bool = False             # "돌아가신 영감이 보고 싶네", "할멈이 그리워"
@@ -287,6 +307,8 @@ class TextSignals:
     worsening: bool = False         # 지금 상태가 이전보다 나빠졌다는 말 ("지금은 더 심해"). 최근 증상 기록이 있을 때만 확인
     moan: bool = False              # 신음 감탄사만으로 된 발화 ("윽", "끙끙") → 안전 확인 (즉시 비상 아님)
     improving: bool = False         # 지금 나아지고 있다는 말 ("덜 아파", "나아졌어") — 통증 재호소·악화로 보지 않음
+    permission_ask: bool = False    # 행동을 해도 되는지 묻는 말 ("걸러도 괜찮지 않을까?") — 위험 호소도, 괜찮다는 대답도 아님
+    skip_ask: bool = False          # 거르기·건너뛰기를 해도 되는지 묻는 말 ('약'이 없어도. 직전이 약 이야기면 복약 질문)
 
 
 def _contains(compact: str, kws, negatable: bool = True) -> bool:
@@ -410,7 +432,7 @@ def _small_intent(core: str) -> str:
         if rest.startswith(p) and len(rest) > len(p):
             rest = rest[len(p):]
             break
-    if rest in MIC_CHECK:
+    if rest in MIC_CHECK or MIC_ASK.fullmatch(rest):
         return "mic_bare" if rest in BARE_HEAR else "mic"
     if rest in REPEAT_ASK:
         return "repeat"
@@ -467,13 +489,58 @@ def _question(compact: str) -> str:
     return ""
 
 
-def _medicine_state(compact: str) -> str:
+def _permission_spans(text: str) -> list:
+    """허락 질문 "~어도 괜찮지 않을까"의 '괜찮지 않-' 부분 위치 (공백을 지운 문자열 기준).
+    '도' 앞 낱말이 동사 연결형으로 볼 근거가 있을 때만. 애매하면 넣지 않는다 (기존 위험 판단 유지)"""
+    chars, starts, prev_word = [], [], False
+    for ch in text:
+        if ch.isspace():
+            prev_word = False
+            continue
+        word = bool(re.match(r"[가-힣A-Za-z0-9]", ch))
+        if word and not prev_word:
+            starts.append(len(chars))
+        chars.append(ch)
+        prev_word = word
+    compact = "".join(chars)
+    spans = []
+    for m in PERMIT_ASK.finditer(compact):
+        ws = max((s for s in starts if s <= m.start()), default=None)
+        if ws is None or ws == m.start():
+            continue
+        stem = compact[ws:m.start()]                     # '도' 앞 낱말 ("걸러", "건너뛰어", "있어")
+        before = [s for s in starts if s < ws]
+        prev = re.sub(r"[^가-힣A-Za-z0-9]", "", compact[before[-1]:ws]) if before else ""
+        if stem in PERMIT_NOUNS or not stem.endswith(PERMIT_ENDINGS):
+            continue
+        if len(stem) == 1 and not (stem in PERMIT_SHORT or prev in PERMIT_SHORT_BEFORE):
+            continue                                     # "해도"는 '해(年·태양)도'일 수 있다 → "안 해도"처럼 근거가 있을 때만
+        spans.append((m.start(1), m.end(1)))
+    return spans
+
+
+def _blank_spans(s: str, spans) -> str:
+    for a, b in spans:
+        s = s[:a] + "|" * (b - a) + s[b:]
+    return s
+
+
+def _skip_ask(compact: str, permit: bool) -> bool:
+    """거르기·건너뛰기를 해도 되는지 묻는 말 ("하루쯤은 걸러도 괜찮지 않을까?", "건너뛰어도 괜찮을까?")"""
+    return bool(MED_MISSED.search(compact)) and (permit or bool(MED_ASK.search(compact)))
+
+
+def _medicine_state(compact: str, permit: bool = False) -> str:
     """약 이야기의 종류. 복용 판단 질문이 가장 먼저 (누락·거부와 함께 물어도 판단 질문), 다음 거부, 다음 누락.
     약 이야기가 없으면 "" (예약·치약·약속 등은 약 이야기가 아님)"""
+    if MED_WORD.search(compact) and _skip_ask(compact, permit):
+        return "ask"                  # "약을 오늘 하루는 건너뛰어도 괜찮지 않겠냐고": '약'과 동사 사이가 멀어도 복용 판단 질문
     if not (MED_CONTEXT.search(compact) or any(k in compact for k in MEDICINE)):
         return ""
-    if MED_ASK.search(compact):
+    if MED_ASK.search(compact) or permit:
         return "ask"
+    if MED_CHECK.search(compact):
+        return "check"
     if any(k in compact for k in MED_REFUSE):
         return "refuse"
     if MED_MISSED.search(compact):
@@ -481,7 +548,21 @@ def _medicine_state(compact: str) -> str:
     return ""
 
 
-def _meal_state(compact: str) -> str:
+def _meal_memory_clauses(text: str) -> tuple:
+    """(현재 식사 완료 절이 있는지, 추억 회상 절에 식사 표현이 있는지) — 절마다 회상 표지와 함께 본다"""
+    now_done = memory = False
+    for clause in CLAUSE_SPLIT.split(text or ""):
+        c = re.sub(r"\s+", "", clause or "")
+        if not any(k in c for k in MEAL_DONE):
+            continue
+        if any(k in c for k in MEAL_MEMORY):
+            memory = True
+        else:
+            now_done = True
+    return now_done, memory
+
+
+def _meal_state(compact: str, text: str = "") -> str:
     if any(k in compact for k in MEDICINE) or MED_CONTEXT.search(compact):
         return ""
     if any(k in compact for k in MEAL_ASK):
@@ -489,7 +570,8 @@ def _meal_state(compact: str) -> str:
     if any(k in compact for k in MEAL_NOT):
         return "not"
     if any(k in compact for k in MEAL_DONE):
-        return "done"
+        now_done, memory = _meal_memory_clauses(text or compact)
+        return "done" if (now_done or not memory) else ""      # "옛날에 … 먹었는데"만 있으면 방금 식사가 아니다
     return ""
 
 
@@ -531,6 +613,22 @@ def _improving(text: str) -> bool:
                 continue
             return True
     return False
+
+
+PAIN_INTERJECTIONS = ("아구", "아이고", "아이구", "아야", "아휴", "어휴")
+
+
+def _pain_exclaim(tokens, compact: str) -> Optional[str]:
+    """'허리야', '무릎이야' 같은 '부위 + 야' 감탄형 통증의 부위. 같은 발화에 '아구·아이고·아야·아휴·어휴'가 있거나
+    그 낱말이 발화의 마지막일 때만 (부위를 부르기만 한 말은 통증이 아님)"""
+    for i, t in enumerate(tokens):
+        for p in BODY_PARTS:
+            if p == "가슴":                       # 가슴은 위험 증상이라 감탄형을 일상 통증으로 낮추지 않는다 (기존 판정 유지)
+                continue
+            if t in (p + "야", p + "이야"):
+                if any(k in compact for k in PAIN_INTERJECTIONS) or i == len(tokens) - 1:
+                    return p
+    return None
 
 
 def _recall_noquote(compact: str) -> bool:
@@ -598,7 +696,9 @@ def analyze(text: str) -> TextSignals:
     compact = re.sub(r"\s+", "", text)
     tokens = re.findall(r"[가-힣A-Za-z0-9]+", text)
 
-    word_view = compact
+    permit_spans = _permission_spans(text)               # "걸러도 괜찮지 않을까?": '괜찮지 않-'은 위험 호소가 아니다
+    permit_texts = [compact[a:b] for a, b in permit_spans]
+    word_view = _blank_spans(compact, permit_spans)
     for p in NOT_SYMPTOM_WORDS:
         word_view = word_view.replace(p, "|" * len(p))
     chest, heart, tight = _aches(word_view, CHEST), _aches(word_view, HEART), _aches(word_view, CHEST_TIGHT)
@@ -663,10 +763,16 @@ def analyze(text: str) -> TextSignals:
                  and not insist and not reports_fall and not pain_repeated)
     symptom_said = "" if recall else next(
         (said for stems, said in SYMPTOM_SAID if _contains(pain_view, stems)), "")
+    exclaim_part = (_pain_exclaim(tokens, compact)
+                    if distress == "none" and not self_harm and not recall and not symptom_said else None)
+    if exclaim_part:                              # "아구.. 허리야..": 위험 신호 없는 일상 통증으로 본다
+        distress, pain_soft, symptom_said = "mild", True, "아프다고"
 
     ok_tokens = [t for t in tokens if not ASKING_OK_WORD.fullmatch(t)    # "괜찮으세요?"는 대답이 아니다
-                 and not OK_IN_PROGRESS.fullmatch(t)]                      # "괜찮아지는 것 같아"는 확답이 아니다
-    ok_compact = OK_IN_PROGRESS.sub("", ASKING_OK.sub("", compact))
+                 and not OK_IN_PROGRESS.fullmatch(t)                       # "괜찮아지는 것 같아"는 확답이 아니다
+                 and not any(t in p or p in t for p in permit_texts)       # 허락 질문의 '괜찮지 않-'도 대답이 아니다
+                 and not OK_GUESS.match(t)]                                # "괜찮겠지", "괜찮을 거야"는 추측
+    ok_compact = OK_GUESS.sub("", OK_IN_PROGRESS.sub("", ASKING_OK.sub("", _blank_spans(compact, permit_spans))))
     explicit_ok = (any(t.startswith("괜찮") for t in ok_tokens)
                    or "이상없" in ok_compact or "문제없" in ok_compact
                    or _fuzzy_ok(ok_tokens))
@@ -698,11 +804,13 @@ def analyze(text: str) -> TextSignals:
         recovered=(not negative) and (_contains(compact, RECOVERY) or past_positive),
         past_positive=past_positive,
         joy=(not negative) and _contains(compact, JOY),
-        meal_state=_meal_state(compact),
+        meal_state=_meal_state(compact, text),
+        meal_memory=_meal_memory_clauses(text)[1],
         discomfort=_contains(compact, DISCOMFORT),
         tired=_contains(compact, TIRED),
-        medicine=any(k in compact for k in MEDICINE) or bool(MED_CONTEXT.search(compact)),
-        medicine_state=_medicine_state(compact),
+        medicine=(any(k in compact for k in MEDICINE) or bool(MED_CONTEXT.search(compact))
+                  or bool(MED_WORD.search(compact) and _skip_ask(compact, bool(permit_spans)))),
+        medicine_state=_medicine_state(compact, bool(permit_spans)),
         sleep_bad=any(k in compact for k in SLEEP_BAD),
         question=_question(compact),
         sleep_well=any(k in compact for k in SLEEP_WELL),
@@ -716,7 +824,7 @@ def analyze(text: str) -> TextSignals:
         pain_soft=pain_soft, recall_question=recall,
         recall_symptom=recall and (any(k in compact for k in SYMPTOM_STEMS + PAST_SYMPTOM) or "어디" in compact),
         insist=insist, symptom_said=symptom_said,
-        symptom_parts=_body_parts(tokens) if symptom_said else [],
+        symptom_parts=([exclaim_part] if exclaim_part else _body_parts(tokens)) if symptom_said else [],
         answer_no=bool(NO_ANSWER & set(tokens)) or any(k in compact for k in NO_ANSWER_MARKS),
         answer_bearable=any(k in ok_compact for k in BEARABLE_MARKS),
         rescue_like=rescue_like, rescue_word=rescue_word if rescue_like else "", call_help=call_help,
@@ -726,7 +834,8 @@ def analyze(text: str) -> TextSignals:
         hazard_report="evacuated" if any(k in compact for k in EVACUATED)
         else "gone" if any(k in compact for k in HAZARD_GONE) else "",
         asks_listener=any(ASKS_LISTENER.search(t) for t in tokens),
-        scream=scream, worsening=worsening, moan=moan, improving=_improving(text) and not worsening)
+        scream=scream, worsening=worsening, moan=moan, improving=_improving(text) and not worsening,
+        permission_ask=bool(permit_spans), skip_ask=_skip_ask(compact, bool(permit_spans)))
 
 
 def robot_speech_flags(text: str) -> tuple:

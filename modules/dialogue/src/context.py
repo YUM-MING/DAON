@@ -36,6 +36,7 @@ class ConversationContext:
         self.probe_streak = 0                  # 조심스러운 되묻기(GENTLE_PROBE) 연속 횟수
         self.last_topic: Optional[str] = None  # 직전 발화의 화제 (같은 화제면 이어가기 응답)
         self.prev_topic: Optional[str] = None  # 그 전 발화의 화제 (LLM 문맥용)
+        self.last_medicine = False             # 직전 발화가 약 이야기였는지 ("약 먹었던가" 뒤 "걸러도 괜찮지 않을까?")
         self.resume_topic: Optional[str] = None  # STT 재질문 직전의 화제: 다시 알아들으면 이 화제로 돌아간다
         self.topic_counts: Counter = Counter() # 부정 발화에서 반복된 주제
         self.notice_sent = False

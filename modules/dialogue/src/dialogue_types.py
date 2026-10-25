@@ -62,6 +62,8 @@ class Config:
     sound_recheck_cooldown_secs: float = 60.0  # 소리 단독 확인이 괜찮다는 대답·보호자 해제로 끝난 뒤, 정상 자세가 보이는 소리 단독 재확인을 보류(초)
     lying_recheck_after_ok_secs: float = 300.0  # 누움 확인에서 괜찮다고 한 뒤 다음 누움 무동작 재확인까지(초)
     sound_dup_window_secs: float = 5.0  # 안전 확인 시작 직후 이 시간 안에 따로 도착한 낙상 자세 근거는 질문을 다시 하지 않고 단계·시한만 조정(초)
+    sound_exit_window_secs: float = 5.0  # 낙상음과 화면 이탈(motion=none 전환)이 이 시간 안이면 함께 일어난 것으로 본다(초, 소리 전·후 모두)
+    sound_exit_seen_secs: float = 10.0  # 화면 이탈 근거로 인정하려면 낙상음 전 이 시간 안에 사람을 관측한 이력이 있어야 함(초)
     # 선택적 LLM (환경변수 DIALOGUE_LLM으로만 켜짐, 일상·공감 문장에만)
     llm_max_chars: int = 90  # LLM 문장 최대 길이(자). 넘으면 템플릿
     llm_min_hangul: float = 0.6  # LLM 문장의 한글 비율 하한

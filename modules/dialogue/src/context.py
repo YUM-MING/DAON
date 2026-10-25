@@ -57,6 +57,9 @@ class ConversationContext:
         self.sound_hold: Optional[tuple] = None
         self.sound_cooldown_until: float = float("-inf")   # 정상 자세가 보이는 소리 단독 재확인을 보류하는 끝 시각
         self.lying_recheck_at: Optional[float] = None      # 누움 확인에 괜찮다고 한 뒤, 이 시각 전에는 누움 무동작 재확인 안 함
+        # 화면 이탈: 사람을 마지막으로 관측한 시각(자세 또는 moving/still), 그 뒤 motion=none(사람 없음)으로 바뀐 시각
+        self.seen_ts: Optional[float] = None
+        self.absent_since: Optional[float] = None
         self.urgent_prompt: Optional[float] = None   # "급하시면 바로 말씀해 주세요"라고 물은 시각 (다음 발화의 '급해'를 구조 요청으로)
         self.unclear_streak = 0                # 연속된 STT 오류 발화 수
         self.last_unclear_key: Optional[str] = None   # 직전 STT 오류 종류 (shout | garbled), 정상 발화면 None
@@ -72,6 +75,13 @@ class ConversationContext:
                 changed = (inp.emotion != self.last["emotion"]
                            or now - self.emotion_ts > self.cfg.emotion_ttl)
                 self.last["emotion"], self.emotion_ts, self.emotion_conf = inp.emotion, now, conf
+        if inp.motion == "none":                   # 사람 없음 (레이더·규약상 비전): 관측 이력이 있을 때만 이탈 시작으로 기록
+            if self.absent_since is None and self.seen_ts is not None:
+                self.absent_since = now
+        elif inp.motion in ("moving", "still") or (
+                inp.pose is not None and not (inp.pose == "fall" and self.last["motion"] == "none")):
+            # 사람 관측 (사람이 없는 동안 들어온 낙상 포즈는 비전의 '소실 후 확정' 신호라 관측으로 보지 않는다)
+            self.seen_ts, self.absent_since = now, None
         for key in ("pose", "motion"):
             v = getattr(inp, key)
             if v is not None:
@@ -146,6 +156,24 @@ class ConversationContext:
         n, fresh = self.normal_seen_ts, self.cfg.sound_pose_fresh_secs
         return (n is not None and self.last["pose"] == "normal" and ts - fresh <= n <= ts + fresh
                 and (self.floor_seen_ts is None or self.floor_seen_ts < n))
+
+    def fall_evidence_start(self, now: float) -> Optional[float]:
+        """지금 확인 근거가 되는 낙상 포즈·낙상음 중 가장 이른 시각 (융합 창 안의 이벤트 + 보류 중인 소리 근거)"""
+        ts = [t for k, t, c in self.events if k in ("fall_pose", "fall_sound") and 0 <= now - t <= self.cfg.fusion_window]
+        held = self.held_sound(now)
+        if held:
+            ts.append(held[0])
+        return min(ts) if ts else None
+
+    def exit_linked(self, sound_ts: float) -> bool:
+        """낙상음과 화면 이탈이 함께 일어났는지: 지금 사람 없음(motion=none)이고, 이탈 시작이 소리 전후
+        sound_exit_window_secs 안이며, 소리 전 sound_exit_seen_secs 안에 사람을 관측한 이력이 있음.
+        이 경우 이탈 전에 본 정상 자세는 지금 안전하다는 근거가 아니다"""
+        a, seen = self.absent_since, self.seen_ts
+        if a is None or seen is None or self.last["motion"] != "none":
+            return False
+        return (sound_ts - seen <= self.cfg.sound_exit_seen_secs
+                and abs(a - sound_ts) <= self.cfg.sound_exit_window_secs)
 
     def normal_kept(self, sound_ts: float, now: float) -> bool:
         """지금도 신선한 정상 자세: 마지막 정상 관측이 sound_pose_fresh_secs 안이고, 소리 뒤로 바닥 자세가 없음"""

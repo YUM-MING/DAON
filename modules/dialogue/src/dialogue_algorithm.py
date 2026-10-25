@@ -201,6 +201,7 @@ class SafetySession:
     sound_ts: Optional[float] = None    # 그 낙상음 시각
     light: bool = False             # 가벼운 확인: 소리 단독 + 소리 전후 정상 자세 관측 (무응답이어도 정상 자세가 계속 보이면 알림 없음)
     danger_origin: bool = False     # 위험 증상(어지럼·가슴·숨 등)으로 시작한 확인 (호전 표현만으로 풀지 않음)
+    fall_evidence_ts: Optional[float] = None   # 이 확인을 시작시킨 낙상 포즈·낙상음 중 가장 이른 시각 (낙상 근거 확인만)
     assessment: Optional[dict] = None              # 안전 확인을 시작한 상황 판단
     evidence: list = field(default_factory=list)   # 비상 근거 누적 (최초 근거 + 이후 변화)
 
@@ -693,7 +694,8 @@ class DialogueEngine:
         - 자세 정보가 없거나 오래됐으면(모름) 지금처럼 일반 안전 확인
         - 가벼운 확인 종류는 괜찮다는 대답·보호자 해제 뒤 쿨다운 동안 다시 묻지 않고 근거만 남긴다 (D-3)"""
         ts, conf = sit.sound
-        light = self.ctx.normal_around(ts, now)
+        exited = self.ctx.exit_linked(ts)
+        light = self.ctx.normal_around(ts, now) and not exited
         if light and now < self.ctx.sound_cooldown_until:
             # 소리는 기록하고 보류 근거로 둔다: 보류 시간 안에 바닥 자세가 오면 기존 낙상 경로로 간다
             self.ctx.events = [e for e in self.ctx.events if e[0] != "fall_sound"]
@@ -707,7 +709,8 @@ class DialogueEngine:
             sit.evidence.append(f"소리 전후 {int(self.cfg.sound_pose_fresh_secs)}초 안 정상 자세 관측 → 가벼운 확인")
             return self._start_safety(now, sit, sig, "소리 단독 충격 → 가벼운 확인", variant="sound_light",
                                       sound=(ts, conf), light=True)
-        sit.evidence.append("자세 정보 없음·오래됨 (정상과 구분 불가) → 일반 안전 확인")
+        sit.evidence.append("낙상음과 화면 이탈(사람 없음)이 함께 일어남 → 이탈 전 정상 자세는 근거 아님 → 일반 안전 확인"
+                            if exited else "자세 정보 없음·오래됨 (정상과 구분 불가) → 일반 안전 확인")
         return self._start_safety(now, sit, sig, sound=(ts, conf))
 
     def _start_safety(self, now, sit: Situation, sig: TextSignals, why: str = "안전 확인 시작",
@@ -722,10 +725,11 @@ class DialogueEngine:
         timeout = self.cfg.response_timeout
         if sit.risk_level >= RiskLevel.HIGH:
             timeout *= self.cfg.high_risk_timeout_ratio     # 위험도 높으면 기다리는 시간 단축
+        fall_ts = self.ctx.fall_evidence_start(now) if sit.trigger == "fall" else None   # 비우기 전에 근거 시각을 남긴다
         self.state = State.SAFETY_CHECK
         self.session = SafetySession(asked_at=now, timeout=timeout, variant=variant, assessment=sit.to_dict(),
                                      started_at=now, sound_only=sound is not None, danger_origin=bool(sig.danger_kinds),
-                                     sound_ts=sound[0] if sound else None, light=light)
+                                     sound_ts=sound[0] if sound else None, light=light, fall_evidence_ts=fall_ts)
         self.ctx.consume_events(now)
         # 소리 단독 확인이면 그 소리를 보류 근거로 둔다 (확인 중에는 계속, 끝나면 보류 시간 동안). 그 밖의 확인은 비운다
         self.ctx.sound_hold = (sound[0], sound[1], None) if sound else None
@@ -767,6 +771,10 @@ class DialogueEngine:
                     and (s.sound_only or (sensed.trigger or "fall") == variant)):
                 return self._adjust_safety(now, sensed)
             return self._start_safety(now, sensed, NO_TEXT, "확인 중 새 위험 근거 → 다시 확인")
+        if (s.light and s.sound_ts is not None and self.ctx.exit_linked(s.sound_ts)):
+            # 가벼운 확인 중(또는 시작 직후) 사람이 화면에서 사라짐 → 일반 안전 확인으로 (질문은 다시 하지 않음, 시한 그대로)
+            s.light = False
+            s.evidence.append("낙상음 전후 화면 이탈(사람 없음) → 가벼운 확인을 일반 안전 확인으로 전환")
         if (s.sound_only and not s.light and inp.pose == "normal"
                 and s.sound_ts is not None and now - s.sound_ts <= self.cfg.sound_pose_fresh_secs
                 and self.ctx.normal_around(s.sound_ts, now)):
@@ -892,12 +900,17 @@ class DialogueEngine:
             out.assessment, out.check_level = assessment, "light"
             return out
         motion = self.ctx.motion(now)      # 유효시간 안에 실제로 받은 움직임만 해제 근거로 쓴다
+        # 낙상 포즈·낙상음 근거의 확인: 그 근거보다 먼저 관측된 moving은 넘어진 뒤의 움직임이 아니므로 해제 근거가 아니다
+        # (화면 밖으로 넘어져 움직임 값이 더 오지 않으면 넘어지기 전 값이 유효시간 동안 남아 있다)
+        stale = (motion == "moving" and s.fall_evidence_ts is not None and self.ctx.motion_ts is not None
+                 and self.ctx.motion_ts < s.fall_evidence_ts)
         # 움직임은 '일어났다'는 뜻이 아니다: 바닥 자세가 오래 이어져 다시 확인한 경우엔 움직임만으로 해제하지 않는다
-        if motion == "moving" and s.variant != "fall_persist":
+        if motion == "moving" and not stale and s.variant != "fall_persist":
             self._close_safety(now)
             return self._speak(State.NORMAL, Strategy.RESUME, {"variant": "moving_noreply"},
                                "무응답이나 움직임 확인됨 (일단 정상 처리, 모니터링 계속)")
-        what = ("움직임은 있으나 바닥 자세 지속" if motion == "moving"
+        what = ("낙상 근거 이전의 움직임만 있음 (해제 근거 아님)" if stale
+                else "움직임은 있으나 바닥 자세 지속" if motion == "moving"
                 else "움직임 없음" if motion else "움직임 정보 없음")
         head = "응답은 있었으나 안전 미확인 → 추가 질문에 무응답" if s.responded else "무응답"
         return self._escalate(f"{head} + {what} (motion={motion or '정보 없음'}, "
@@ -1130,6 +1143,9 @@ class DialogueEngine:
         s.light, s.variant = False, sensed.trigger or "fall"
         s.timeout = min(s.timeout, timeout)
         s.assessment = sensed.to_dict()
+        new_ts = self.ctx.fall_evidence_start(now)
+        if new_ts is not None:
+            s.fall_evidence_ts = new_ts if s.fall_evidence_ts is None else min(s.fall_evidence_ts, new_ts)
         self.ctx.consume_events(now)
         self.ctx.sound_hold = None
         why = ("가벼운 확인 중 낙상 자세 근거 도착 → 일반 안전 확인으로 승격" if was_light

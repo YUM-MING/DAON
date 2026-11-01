@@ -18,13 +18,13 @@ html, body{ background:#000; overflow:hidden; height:100%; }
   width:100%; height:100%;
   background:#000;
   display:flex; align-items:center; justify-content:center;
-  gap:10vw;
+  gap:15vw;
 }
 
 /* ---------- 눈 공통 구조 ---------- */
 .eye{
   position:relative;
-  width:18vh; height:18vh;
+  width:40vh; height:40vh;
   background:#fff;
   border-radius:50%;
   display:flex; align-items:center; justify-content:center;
@@ -32,7 +32,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
   flex-shrink:0;
 }
 .eye .pupil{
-  width:48%; height:48%; background:#0a0a0a; border-radius:50%;
+  width:50%; height:50%; background:#0a0a0a; border-radius:50%;
   position:relative; transition:all .25s;
 }
 /* 가장 작은 흰색 하이라이트: 검은 동공(.pupil) 영역 안쪽에 확실히 들어가도록
@@ -54,7 +54,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 
 /* 2. 행복한 눈: 아치형(⌒) 곡선 — 위로 볼록한 반원 테두리 */
 .face-screen[data-eye="happy"] .eye{
-  background:transparent; width:20vh; height:20vh;
+  background:transparent; width:30vh; height:30vh;
 }
 .face-screen[data-eye="happy"] .eye::before{
   content:""; position:absolute; inset:0;
@@ -65,12 +65,12 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 .face-screen[data-eye="happy"] .eye .highlight{ display:none; }
 
 /* 3. 호기심: 더 크고 동그란 눈 + 큰 동공 (집중하는 느낌) */
-.face-screen[data-eye="curious"] .eye{ width:22vh; height:22vh; }
+.face-screen[data-eye="curious"] .eye{ width:40vh; height:40vh; }
 .face-screen[data-eye="curious"] .eye .pupil{ width:62%; height:62%; }
 
 /* 4. 졸린 눈: 아래로 처진 반원(눈꺼풀이 반 덮인 느낌) */
 .face-screen[data-eye="sleepy"] .eye{
-  background:transparent; width:20vh; height:11vh;
+  background:transparent; width:30vh; height:22vh;
 }
 .face-screen[data-eye="sleepy"] .eye::before{
   content:""; position:absolute; inset:0;
@@ -112,7 +112,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 
 /* 8. 기쁨의 눈: 아래로 볼록한 곡선(⌣) + 짧은 속눈썹 느낌의 선 (신나는 느낌) */
 .face-screen[data-eye="joy"] .eye{
-  background:transparent; width:20vh; height:20vh;
+  background:transparent; width:30vh; height:30vh;
 }
 .face-screen[data-eye="joy"] .eye::before{
   content:""; position:absolute; inset:0;
@@ -129,7 +129,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 .face-screen[data-eye="joy"] .eye .highlight{ display:none; }
 
 /* 9. 네모형 눈: 둥근 사각형 (직관적/단순한 느낌) */
-.face-screen[data-eye="square"] .eye{ border-radius:22%; width:17vh; height:17vh; }
+.face-screen[data-eye="square"] .eye{ border-radius:22%; width:30vh; height:30vh; }
 .face-screen[data-eye="square"] .eye .pupil{ border-radius:18%; width:50%; height:50%; }
 
 /* 10. 링형 눈: 도넛 모양 (미래지향적 느낌) */
@@ -141,7 +141,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 /* 11. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
    위급 상황임을 눈으로도 즉시 알 수 있게 함 (상태 alert 자동 매핑 + 수동 선택 모두 지원) */
 .face-screen[data-eye="emergency"] .eye{
-  width:24vh; height:24vh; background:#fff;
+  width:40vh; height:40vh; background:#fff;
   animation: emergencyPulse .6s ease-in-out infinite;
 }
 .face-screen[data-eye="emergency"] .eye .pupil{

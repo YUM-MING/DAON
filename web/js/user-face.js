@@ -209,6 +209,74 @@ function clearAlertTimer(){ if(alertTimer){ clearInterval(alertTimer); alertTime
 /* ---------- 모서리 제스처(모드 재설정) ---------- */
 mountCornerReset();
 
+/* ---------- 사용자 터치 시 전체화면 전환 ---------- */
+let fullscreenRequesting = false;
+
+function isRobotFullscreen(){
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+async function enterRobotFullscreen(){
+  if(isRobotFullscreen() || fullscreenRequesting) return;
+
+  fullscreenRequesting = true;
+
+  const el = document.documentElement || document.body;
+
+  try{
+    if(el.requestFullscreen){
+      try{
+        await el.requestFullscreen({ navigationUI: "hide" });
+      }catch(e){
+        await el.requestFullscreen();
+      }
+    }else if(el.webkitRequestFullscreen){
+      el.webkitRequestFullscreen();
+    }else{
+      const msg = "이 브라우저는 전체화면 API를 지원하지 않습니다. 홈 화면에 추가해서 실행해주세요.";
+      if(typeof toast === "function") toast(msg);
+      if(typeof log === "function") log(msg);
+      return;
+    }
+
+    try{
+      await screen.orientation?.lock?.("landscape");
+    }catch(e){
+      // 일부 모바일 브라우저에서는 가로 고정이 막힐 수 있음
+    }
+
+    if(typeof log === "function") log("전체화면 전환 요청 완료");
+  }catch(err){
+    const msg = `전체화면 전환 실패: ${err.name || err.message || err}`;
+    if(typeof toast === "function") toast("전체화면 실패: 권한 허용 후 화면을 한 번 더 터치하세요");
+    if(typeof log === "function") log(msg);
+  }finally{
+    fullscreenRequesting = false;
+  }
+}
+
+function handleFullscreenGesture(){
+  enterRobotFullscreen();
+}
+
+document.addEventListener("touchend", handleFullscreenGesture, { capture:true, passive:true });
+document.addEventListener("click", handleFullscreenGesture, { capture:true });
+document.addEventListener("pointerup", handleFullscreenGesture, { capture:true, passive:true });
+
+document.addEventListener("fullscreenchange", () => {
+  if(isRobotFullscreen() && typeof log === "function"){
+    log("전체화면 전환 완료");
+  }
+});
+
+document.addEventListener("fullscreenerror", () => {
+  if(typeof log === "function"){
+    log("fullscreenerror 발생");
+  }
+});
+
+
+
 /* ---------- 초기 진입 데모: 상태 전환과 함께 상황별 눈 매핑도 함께 시연 (서버 연결 시에는 생략) ---------- */
 setState("sleep");
 setContext("noUser");                          // 대기 중 → 졸린 눈

@@ -1,6 +1,6 @@
 /* =========================================================
    robot-face.css — 실제 하드웨어(팬더 로봇) 화면에 표시될 얼굴 디자인
-   실제 사용되는 눈 모양 7종 + 긴급 모드 전용 눈(emergency)을 CSS로 재현
+   실제 사용되는 눈 모양 6종 + 긴급 모드 전용 눈(emergency)을 CSS로 재현
    갤럭시 폰 "가로(landscape)" 고정 사용을 전제로 설계
 ========================================================= */
 
@@ -102,11 +102,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 .face-screen[data-eye="side"] .eye .pupil{ transform:translateX(-22%); }
 .face-screen[data-eye="side"] .eye:last-child .pupil{ transform:translateX(-22%); }
 
-/* 7. 네모형 눈: 둥근 사각형 (직관적/단순한 느낌) */
-.face-screen[data-eye="square"] .eye{ border-radius:22%; width:30vh; height:30vh; }
-.face-screen[data-eye="square"] .eye .pupil{ border-radius:18%; width:50%; height:50%; }
-
-/* 8. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
+/* 7. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
    위급 상황임을 눈으로도 즉시 알 수 있게 함 (상태 alert 자동 매핑 + 수동 선택 모두 지원) */
 .face-screen[data-eye="emergency"] .eye{
   width:60vh; height:60vh; background:#fff;

@@ -25,10 +25,10 @@ const STATE_SPEECH = {
   alert:"괜찮으세요?! 응답해주세요", recover:"다행이에요. 다시 평소처럼 지낼게요",
 };
 
-/* 눈 디자인 라벨 (일반 7종 + 긴급 모드 눈) */
+/* 눈 디자인 라벨 (일반 6종 + 긴급 모드 눈) */
 const EYE_LABEL = {
   default:"기본형", happy:"행복한 눈", curious:"호기심", sleepy:"졸린 눈",
-  sparkle:"반짝이는 눈", side:"옆눈", square:"네모형 눈", emergency:"긴급 눈",
+  sparkle:"반짝이는 눈", side:"옆눈", emergency:"긴급 눈",
 };
 
 /* 상태(state)별 기본 눈 모양 자동 매핑
@@ -39,7 +39,7 @@ const STATE_DEFAULT_EYE = {
 };
 /* 감정(emotion)별 기본 눈 모양 자동 매핑 */
 const EMOTION_DEFAULT_EYE = {
-  neutral:"default", happy:"happy", sad:"side", angry:"square",
+  neutral:"default", happy:"happy", sad:"side", angry:"default",
 };
 
 /* =========================================================

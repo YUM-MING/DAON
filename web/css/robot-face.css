@@ -24,7 +24,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 /* ---------- 눈 공통 구조 ---------- */
 .eye{
   position:relative;
-  width:40vh; height:40vh;
+  width:60vh; height:60vh;
   background:#fff;
   border-radius:50%;
   display:flex; align-items:center; justify-content:center;
@@ -54,7 +54,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 
 /* 2. 행복한 눈: 아치형(⌒) 곡선 — 위로 볼록한 반원 테두리 */
 .face-screen[data-eye="happy"] .eye{
-  background:transparent; width:30vh; height:30vh;
+  background:transparent; width:60vh; height:60vh;
 }
 .face-screen[data-eye="happy"] .eye::before{
   content:""; position:absolute; inset:0;
@@ -65,12 +65,12 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 .face-screen[data-eye="happy"] .eye .highlight{ display:none; }
 
 /* 3. 호기심: 더 크고 동그란 눈 + 큰 동공 (집중하는 느낌) */
-.face-screen[data-eye="curious"] .eye{ width:40vh; height:40vh; }
+.face-screen[data-eye="curious"] .eye{ width:60vh; height:60vh; }
 .face-screen[data-eye="curious"] .eye .pupil{ width:62%; height:62%; }
 
 /* 4. 졸린 눈: 아래로 처진 반원(눈꺼풀이 반 덮인 느낌) */
 .face-screen[data-eye="sleepy"] .eye{
-  background:transparent; width:30vh; height:22vh;
+  background:transparent; width:60vh; height:22vh;
 }
 .face-screen[data-eye="sleepy"] .eye::before{
   content:""; position:absolute; inset:0;
@@ -134,14 +134,14 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 
 /* 10. 링형 눈: 도넛 모양 (미래지향적 느낌) */
 .face-screen[data-eye="ring"] .eye .pupil{
-  width:70%; height:70%; background:transparent; border:2.4vh solid #0a0a0a; box-sizing:border-box;
+  width:80%; height:80%; background:transparent; border:2.4vh solid #0a0a0a; box-sizing:border-box;
 }
 .face-screen[data-eye="ring"] .eye .highlight{ display:none; }
 
 /* 11. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
    위급 상황임을 눈으로도 즉시 알 수 있게 함 (상태 alert 자동 매핑 + 수동 선택 모두 지원) */
 .face-screen[data-eye="emergency"] .eye{
-  width:40vh; height:40vh; background:#fff;
+  width:60vh; height:60vh; background:#fff;
   animation: emergencyPulse .6s ease-in-out infinite;
 }
 .face-screen[data-eye="emergency"] .eye .pupil{

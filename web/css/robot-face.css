@@ -1,6 +1,6 @@
 /* =========================================================
    robot-face.css — 실제 하드웨어(팬더 로봇) 화면에 표시될 얼굴 디자인
-   레퍼런스 3D 모델링 이미지의 10가지 눈 모양 + 긴급 모드 전용 눈(11번째)을 CSS로 재현
+   실제 사용되는 눈 모양 7종 + 긴급 모드 전용 눈(emergency)을 CSS로 재현
    갤럭시 폰 "가로(landscape)" 고정 사용을 전제로 설계
 ========================================================= */
 
@@ -46,7 +46,7 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 @keyframes eyeblink{ 0%,90%,100%{ transform:scaleY(1);} 95%{ transform:scaleY(.1);} }
 
 /* =========================================================
-   10가지 눈 스타일 — .face-screen[data-eye="..."] 로 전환
+   눈 스타일 — .face-screen[data-eye="..."] 로 전환
 ========================================================= */
 
 /* 1. 기본형: 단순 동그란 눈 + 하이라이트 (이미 공통 구조가 기본값) */
@@ -102,43 +102,11 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 .face-screen[data-eye="side"] .eye .pupil{ transform:translateX(-22%); }
 .face-screen[data-eye="side"] .eye:last-child .pupil{ transform:translateX(-22%); }
 
-/* 7. 하트 눈: 동공이 하트 모양 (사랑스러운 느낌) */
-.face-screen[data-eye="heart"] .eye .pupil{
-  width:62%; height:62%; background:#0a0a0a; border-radius:0;
-  clip-path: path("M50 85 C20 60,5 40,5 22 C5 8,18 0,32 5 C42 8,48 16,50 24 C52 16,58 8,68 5 C82 0,95 8,95 22 C95 40,80 60,50 85 Z");
-  clip-path: polygon(50% 100%, 20% 70%, 5% 45%, 10% 20%, 30% 5%, 50% 20%, 70% 5%, 90% 20%, 95% 45%, 80% 70%);
-}
-.face-screen[data-eye="heart"] .eye .highlight{ display:none; }
-
-/* 8. 기쁨의 눈: 아래로 볼록한 곡선(⌣) + 짧은 속눈썹 느낌의 선 (신나는 느낌) */
-.face-screen[data-eye="joy"] .eye{
-  background:transparent; width:30vh; height:30vh;
-}
-.face-screen[data-eye="joy"] .eye::before{
-  content:""; position:absolute; inset:0;
-  border:1.6vh solid #fff; border-radius:50%;
-  clip-path: inset(48% 0 0 0);
-}
-.face-screen[data-eye="joy"] .eye::after{
-  content:""; position:absolute; top:6%; right:-6%;
-  width:1.2vh; height:3.4vh; background:#fff; border-radius:2px;
-  transform:rotate(25deg);
-}
-.face-screen[data-eye="joy"] .eye:first-child::after{ right:auto; left:-6%; transform:rotate(-25deg); }
-.face-screen[data-eye="joy"] .eye .pupil,
-.face-screen[data-eye="joy"] .eye .highlight{ display:none; }
-
-/* 9. 네모형 눈: 둥근 사각형 (직관적/단순한 느낌) */
+/* 7. 네모형 눈: 둥근 사각형 (직관적/단순한 느낌) */
 .face-screen[data-eye="square"] .eye{ border-radius:22%; width:30vh; height:30vh; }
 .face-screen[data-eye="square"] .eye .pupil{ border-radius:18%; width:50%; height:50%; }
 
-/* 10. 링형 눈: 도넛 모양 (미래지향적 느낌) */
-.face-screen[data-eye="ring"] .eye .pupil{
-  width:80%; height:80%; background:transparent; border:2.4vh solid #0a0a0a; box-sizing:border-box;
-}
-.face-screen[data-eye="ring"] .eye .highlight{ display:none; }
-
-/* 11. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
+/* 8. 긴급 눈: 낙상/위급 상황(alert 상태) 전용 — 커지고 붉게 변하며 빠르게 맥동(pulse)해서
    위급 상황임을 눈으로도 즉시 알 수 있게 함 (상태 alert 자동 매핑 + 수동 선택 모두 지원) */
 .face-screen[data-eye="emergency"] .eye{
   width:60vh; height:60vh; background:#fff;
@@ -176,7 +144,6 @@ html, body{ background:#000; overflow:hidden; height:100%; }
 @keyframes talkbob{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.04);} }
 
 .face-screen[data-state="alert"]{ animation:alertflash 1s infinite; }
-.face-screen[data-state="alert"] .eye{ width:22vh; height:22vh; }
 .face-screen[data-state="alert"] .eye .pupil{ background:#ff2d3a; }
 @keyframes alertflash{ 0%,100%{ box-shadow:none;} 50%{ box-shadow: inset 0 0 0 100vmax rgba(255,30,40,.12);} }
 

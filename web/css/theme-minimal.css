@@ -3,23 +3,45 @@
    밝은 배경, 큰 글자, 최소 장식. 어르신 가독성 비교 시안
 ========================================================= */
 body.theme-minimal{
-  --bg: #f4f6f9;
-  --fg: #1b2330;
-  --muted: #5b6b82;
-  --card-bg: #ffffff;
-  --accent: #2957d8;
-  --accent-2: #2957d8;
+  --bg: #f4f3fd;
+  --fg: #2b2f4a;
+  --muted: #6a729a;
+  --card-bg: #ffffffd9;
+  --accent: #5566d3;
+  --accent-2: #8f9ee8;
   --danger: #d8303a;
   --warn: #c7820a;
   --success: #1f9d5c;
-  --radius: 16px;
-  --radius-sm: 10px;
-  --shadow: 0 6px 18px rgba(20,30,50,.08);
-  --border-w: 2px;
+  --radius: 24px;
+  --radius-sm: 14px;
+  --shadow: 0 10px 30px rgba(110,122,210,.16);
+  --border-w: 1px;
   --font: "Pretendard","Noto Sans KR",system-ui,sans-serif;
 }
-body.theme-minimal .card{ border-color:#e3e8f0; }
-body.theme-minimal .btn{ box-shadow:none; font-weight:700; }
+/* 공통 배경: 라벤더 그라데이션 + 오른쪽 아래 구름/로봇 (로그인·연결·대시보드 공통) */
+body.theme-minimal{
+  background:
+    url("../img/bg-cloud.png") right bottom / cover no-repeat fixed,
+    linear-gradient(180deg,#f8f7ff 0%,#e9ecfb 100%) fixed;
+}
+body.theme-minimal .field input,
+body.theme-minimal .code-input{
+  background:#fff; color:var(--fg); border:1px solid #d9ddf7; border-radius:14px;
+}
+body.theme-minimal .field input:focus,
+body.theme-minimal .code-input:focus{
+  outline:none; border-color:var(--accent-2); box-shadow:0 0 0 3px rgba(143,158,232,.28);
+}
+body.theme-minimal .auth-card h2,
+body.theme-minimal .pair-card h2{ color:var(--accent); }
+body.theme-minimal .demo-box{ border-top-color:#d9ddf7; }
+body.theme-minimal .card{ border-color:#d9ddf7; backdrop-filter:blur(6px); }
+body.theme-minimal .btn{ box-shadow:0 6px 14px rgba(85,102,211,.28); font-weight:700; }
+body.theme-minimal .btn.ghost,
+body.theme-minimal .btn.outline{ box-shadow:none; }
+body.theme-minimal input[type=text],
+body.theme-minimal textarea,
+body.theme-minimal select{ background:#fff; border-color:#d9ddf7; }
 
 /* 로봇 얼굴 - 단순 도형, 고대비 */
 body.theme-minimal .robot-face{

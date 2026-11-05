@@ -4,26 +4,38 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>실버케어 AI — 진입 화면</title>
-<link rel="stylesheet" href="css/base.css">
-<link rel="stylesheet" href="css/theme-minimal.css">
+<link rel="stylesheet" href="css/base.css?v=4">
+<link rel="stylesheet" href="css/theme-minimal.css?v=4">
 <style>
-  .landing{ min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:40px; padding:40px 20px 100px; }
+  .landing{
+    min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:40px; padding:40px 20px 100px;
+    /* cover: 이미지가 작아도 화면을 꽉 채우도록 자동 확대 (비율 유지, 오른쪽 아래 기준 정렬) */
+    background:url("img/bg-cloud.png") right bottom / cover no-repeat, linear-gradient(180deg,#f8f7ff 0%,#e9ecfb 100%);
+  }
   .brand{ text-align:center; }
-  .brand h1{ font-size:28px; margin:0 0 6px; }
+  .brand h1{ font-size:28px; margin:0 0 6px; color:var(--accent); }
   .brand p{ color:var(--muted); margin:0; }
   .choice-row{ display:flex; gap:24px; flex-wrap:wrap; justify-content:center; width:100%; max-width:760px; }
   .choice-card{
-    flex:1; min-width:260px; padding:36px 24px; text-align:center; cursor:pointer;
-    transition:transform .25s, border-color .25s;
+    flex:1; min-width:260px; padding:32px 24px; text-align:center; cursor:pointer;
+    transition:transform .25s, border-color .25s, box-shadow .25s;
   }
-  .choice-card:hover{ transform:translateY(-4px); border-color:var(--accent); }
-  .choice-card .icon{ width:72px; height:72px; margin:0 auto 18px; border-radius:50%; background:var(--accent); opacity:.15; }
+  .choice-card:hover{ transform:translateY(-6px); border-color:var(--accent-2); box-shadow:0 16px 36px rgba(110,122,210,.26); }
+  /* 프로필 사진: web/img/profile-user.png, web/img/profile-guardian.png (원형으로 잘라 저장한 각각의 이미지) */
+  .choice-card .icon{
+    width:150px; height:150px; margin:0 auto 18px; border-radius:50%;
+    background-color:#e4e8fb;
+    background-repeat:no-repeat; background-position:center; background-size:cover;
+    box-shadow:0 8px 20px rgba(110,122,210,.22);
+  }
+  .choice-card .icon.user{ background-image:url("img/profile-user.png"); }
+  .choice-card .icon.guardian{ background-image:url("img/profile-guardian.png"); }
   .choice-card h3{ font-size:18px; margin-bottom:8px; }
   .choice-card p{ color:var(--muted); font-size:13px; line-height:1.5; }
   .setup-note{ max-width:760px; font-size:13px; color:var(--muted); text-align:center; line-height:1.7; }
   .setup-note b{ color:var(--fg); }
   .first-run{
-    position:fixed; inset:0; background:rgba(5,8,16,.88); z-index:500;
+    position:fixed; inset:0; background:rgba(60,68,130,.55); backdrop-filter:blur(6px); z-index:500;
     display:flex; align-items:center; justify-content:center; padding:20px;
   }
   .first-run .card{ max-width:420px; text-align:center; }
@@ -33,18 +45,18 @@
 
 <div class="landing">
   <div class="brand">
-    <h1>👵 실버케어 AI</h1>
+    <h1>DAON : 실버케어 AI</h1>
     <p>어르신 돌봄 로봇 · 보호자 모니터링 시스템</p>
   </div>
 
   <div class="choice-row">
     <div class="card choice-card" onclick="selectMode('user')">
-      <div class="icon"></div>
+      <div class="icon user"></div>
       <h3>사용자용</h3>
       <p>로봇 얼굴 모드<br>어르신이 사용하는 화면입니다</p>
     </div>
     <div class="card choice-card" onclick="selectMode('guardian')">
-      <div class="icon"></div>
+      <div class="icon guardian"></div>
       <h3>보호자용</h3>
       <p>모니터링 대시보드<br>보호자가 상태를 확인하는 화면입니다</p>
     </div>

@@ -1,15 +1,51 @@
 /* 보호자 대시보드 전용 스타일 */
+
+/* ---- 라벤더 구름 테마 (랜딩 페이지와 통일) ---- */
+body.theme-minimal{
+  background:
+    url("../img/bg-cloud.png") right bottom / cover no-repeat fixed,
+    linear-gradient(180deg,#f8f7ff 0%,#e9ecfb 100%) fixed;
+}
 .gheader{
   position:sticky; top:0; z-index:100;
-  background:color-mix(in srgb, var(--bg) 85%, #000 10%);
-  border-bottom:1px solid color-mix(in srgb, var(--fg) 12%, transparent);
-  padding:14px 0; backdrop-filter:blur(10px);
+  background:rgba(255,255,255,.72);
+  border-bottom:1px solid #d9ddf7;
+  box-shadow:0 6px 20px rgba(110,122,210,.12);
+  padding:14px 0; backdrop-filter:blur(14px);
 }
+.gheader strong{ color:var(--accent); font-size:17px; }
+
+/* 탭: 밑줄 → 알약(pill) 형태 */
+.tabs{ border-bottom:none; gap:8px; padding:6px; background:rgba(255,255,255,.65); border-radius:999px; width:fit-content; max-width:100%; box-shadow:0 4px 14px rgba(110,122,210,.12); }
+.tab-btn{ border-radius:999px; border-bottom:none; margin-bottom:0; padding:10px 20px; }
+.tab-btn:hover{ background:#eef0fc; }
+.tab-btn.active{ background:var(--accent); color:#fff; box-shadow:0 4px 10px rgba(85,102,211,.35); }
+
+/* 카드: 부드러운 흰색 + 라벤더 그림자, 제목 포인트 */
+main .card{ background:rgba(255,255,255,.86); }
+main .card h3{ color:var(--accent); }
+
+/* 표: 라벤더 구분선, 헤더 행 강조 */
+th{ background:#f0f1fd; color:var(--muted); }
+th:first-child{ border-radius:10px 0 0 10px; }
+th:last-child{ border-radius:0 10px 10px 0; }
+th,td{ border-bottom-color:#e6e9fa; }
+tbody tr:hover td{ background:#f7f8ff; }
+
+/* 배지 */
+.badge{ background:#eef0fc; }
+.badge.ok{ background:#e6f6ee; }
+.badge.warn{ background:#fdf3e0; }
+.badge.danger{ background:#fde8ea; }
+
+/* 입력창 포커스 */
+input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color:var(--accent-2); box-shadow:0 0 0 3px rgba(143,158,232,.28); }
 .eval-toggle{ display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); cursor:pointer; }
 
 .silhouette{
   width:110px; height:110px; border-radius:50%;
-  background:color-mix(in srgb, var(--accent) 15%, transparent);
+  background:linear-gradient(180deg,#f3f4ff,#dfe3fa);
+  box-shadow:0 8px 20px rgba(110,122,210,.22), inset 0 0 0 4px #fff;
   display:flex; align-items:center; justify-content:center; font-size:50px;
   flex-shrink:0;
 }
@@ -23,7 +59,7 @@
 .eval-hidden-note{ font-size:13px; line-height:1.6; }
 
 .summary-list{ list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:13px; }
-.summary-list li{ padding:10px 12px; border-radius:10px; background:color-mix(in srgb, var(--fg) 5%, transparent); }
+.summary-list li{ padding:12px 14px; border-radius:14px; background:#f0f1fd; }
 
 /* 긴급 팝업 오버레이 */
 .emergency-overlay{
@@ -48,7 +84,7 @@
 /* 타임라인 차트 (A) */
 .tl-row{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .tl-label{ width:70px; font-size:12px; color:var(--muted); flex-shrink:0; }
-.tl-track{ position:relative; flex:1; height:22px; background:color-mix(in srgb, var(--fg) 6%, transparent); border-radius:6px; overflow:hidden; }
+.tl-track{ position:relative; flex:1; height:22px; background:#eef0fc; border-radius:6px; overflow:hidden; }
 .tl-seg{ position:absolute; top:0; bottom:0; border-radius:4px; }
 .tl-seg.fall{ background:var(--danger); }
 .tl-seg.nofall{ background:color-mix(in srgb, var(--success) 50%, transparent); }
@@ -56,7 +92,7 @@
 /* 막대 차트 (B) */
 .bar-group{ margin-bottom:14px; }
 .bar-group .bg-label{ font-size:12px; color:var(--muted); margin-bottom:6px; display:flex; justify-content:space-between; }
-.bar-track{ height:14px; border-radius:7px; background:color-mix(in srgb, var(--fg) 6%, transparent); overflow:hidden; display:flex; }
+.bar-track{ height:14px; border-radius:7px; background:#eef0fc; overflow:hidden; display:flex; }
 .bar-fill{ height:100%; }
 
 /* 혼동행렬 (D) */

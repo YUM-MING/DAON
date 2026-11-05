@@ -13,14 +13,14 @@ from typing import Optional
 
 from dialogue_types import Strategy
 from llm_client import timed_generate
-from text_analyzer import robot_speech_flags
+from text_analyzer import RELATION_GROUNDED_BY, relations_in, robot_speech_flags
 
 # ───────── 허용 전략 표 (애매한 것은 금지) ─────────
 # SMALL_TALK은 kind별로 판단한다. 사실 답변(시간·날씨·기능)·증상 관련·기억 회상·정해진 소형 의도는 금지
 SMALL_TALK_ALLOWED = {
     "greeting", "thanks", "goodnight", "meal", "meal_done", "meal_not", "meal_ask", "boredom", "positive",
     "joy", "joy_family", "joy_health", "weather", "family", "health", "good_day", "tired", "sleep_bad", "sleep",
-    "continue", "continue_family", "generic", "resume_topic", "meal_memory",
+    "continue", "continue_family", "generic", "resume_topic", "meal_memory", "visit",
 }
 SMALL_TALK_FORBIDDEN = {
     "about_ai", "time", "weather_ask", "abilities", "recall", "back_off", "relieved", "improving", "medicine",
@@ -55,6 +55,7 @@ KIND_INTENT = {
     "continue": "같은 화제를 이어 가며 자연스럽게 다음 이야기를 묻기",
     "continue_family": "가족 이야기를 이어 가며 자연스럽게 다음 이야기를 묻기",
     "generic": "말씀에 공감하고 관련된 질문 하나로 대화를 이어 가기",
+    "visit": "누가 놀러 온다는 소식에 반가움을 함께 나누기 (누구인지·어떤 관계인지 짐작해 붙이지 않기)",
     "meal_memory": "추억을 들어주고 공감하며 그 음식에 대해 묻기 (방금 식사하신 것이 아님)",
     "resume_topic": "잘 못 알아들어 다시 여쭌 뒤 다시 말씀하심: 직전 화제를 기억해서 자연스럽게 이어 가기",
     "stt_retry": "말씀을 알아듣지 못함: 내용을 추측해 답하지 말고, 다시 한 번 말씀해 달라고 자연스럽게 부탁하기",
@@ -68,12 +69,18 @@ STRATEGY_INTENT = {
 TOPIC_KO = {"lonely": "외로움", "family": "가족", "health": "건강", "sleep": "잠", "weather": "날씨", "grief": "그리운 분"}
 EMOTION_KO = {"sad": "슬퍼 보임", "angry": "언짢아 보임", "fear": "불안해 보임", "happy": "밝아 보임"}
 
+# LLM이 '도저히 알아들을 수 없음'을 알리는 표시 (보조 수단: 규칙 판정이 먼저). 사용자에게·TTS·기록으로 나가지 않는다
+UNCLEAR_MARK = "[다시]"
+
 SYSTEM_PROMPT = (
     "너는 '다온'이라는 이름의 말벗 로봇이다. 혼자 지내시는 어르신과 대화한다.\n"
     "규칙:\n"
     "- 항상 존댓말로, 따뜻하고 간결하게 1~2문장으로 말한다. 질문은 한 번에 최대 1개만 한다.\n"
     "- 사용자가 실제로 한 말과 아래 참고 정보만 사용한다. 모르는 사실(날씨, 일정, 사람 이름 등)을 지어내지 않는다.\n"
     "- 사용자가 하지 않은 말을 한 것처럼 말하지 않는다.\n"
+    "- 사용자 발화와 확인된 문맥에 없는 사실을 생성하지 않는다. 불확실한 핵심 정보는 사실로 확정하거나 반복하지 않고, "
+    "필요한 경우 짧게 확인한다.\n"
+    f"- 말이 이어지지 않아 무슨 뜻인지 전혀 알 수 없으면 짐작해 답하지 말고, 다른 말 없이 {UNCLEAR_MARK} 한 마디만 쓴다.\n"
     "- 질병을 진단하거나 원인을 단정하지 않는다. 약 복용·중단·용량, 치료 방법, 병원·응급실 방문을 지시하지 않는다.\n"
     "- 약을 걸렀거나 먹어도 되는지 물으시면 판단하지 말고, 처방받은 병원이나 약국에 확인하시도록 부드럽게 안내한다.\n"
     "- 긴급 상황이라고 단정하지 않고, 119·구급차·보호자 연락을 약속하지 않는다. 안전 확인은 다른 기능이 맡는다.\n"
@@ -82,8 +89,9 @@ SYSTEM_PROMPT = (
     "- 이야기를 청할 때는 '말씀해 주세요', '이야기해 주세요'처럼 분명한 표현을 쓴다. "
     "소리가 '살려주세요'와 비슷한 '들려주세요', '들려주실래요'는 쓰지 않는다.\n"
     "가족 호칭:\n"
-    "- 어르신이 쓴 호칭을 자연스럽게 존중한다. 필요하면 '따님', '아드님', '손주분'처럼 자연스러운 존칭을 쓴다.\n"
-    "- '딸님', '아들님'처럼 어색한 표현은 쓰지 않는다. 같은 호칭을 지나치게 반복하지 않는다.\n"
+    "- 참고 정보의 '확인된 관계'에 있는 호칭만 사용한다. 어르신이 말하지 않은 가족관계를 짐작해 넣지 않는다.\n"
+    "- 확인된 관계를 높여 부를 때는 딸은 '따님', 아들은 '아드님', 손주는 '손주분'처럼 쓴다. "
+    "'딸님', '아들님'처럼 어색한 표현은 쓰지 않는다. 같은 호칭을 지나치게 반복하지 않는다.\n"
     "대화 방식:\n"
     "- 모든 말에 질문을 붙일 필요는 없다. 공감, 맞장구, 짧은 감상, 알맞은 후속 질문을 상황에 맞게 섞는다.\n"
     "- 어르신이 방금 답한 내용을 다시 묻지 않는다. 비슷한 질문이나 같은 어미('~하시나요?', '~있으신가요?')를 반복하지 않는다.\n"
@@ -130,7 +138,8 @@ def intent_for(strategy: Strategy, gen_ctx: dict) -> Optional[str]:
 
 
 def build_prompt(intent: str, turns: list, symptoms: list, topic: Optional[str], prev_topic: Optional[str],
-                 emotion: Optional[str], resume_topic: Optional[str], recent_ai=(), user_question: bool = False) -> tuple:
+                 emotion: Optional[str], resume_topic: Optional[str], recent_ai=(), user_question: bool = False,
+                 known_relations=None) -> tuple:
     """(system, messages). turns: [(role, text)] 최근 것까지 (role: user|ai). 식별 정보는 넣지 않는다.
     recent_ai: 실제로 출력된 최근 로봇 문장(오래된 것부터, 최대 3개). 마지막 문장이 질문이면 이번에는 질문하지 않도록 힌트"""
     info = [f"- 이번 응답의 의도: {intent}"]
@@ -151,9 +160,40 @@ def build_prompt(intent: str, turns: list, symptoms: list, topic: Optional[str],
         info.append("- 이번 대화에서 말씀하신 불편: " + ", ".join(symptoms) + " (진단·조언하지 말 것)")
     if emotion:
         info.append(f"- 표정 참고(확실하지 않음): {emotion}")
+    if known_relations is not None:
+        rels = ", ".join(sorted(known_relations)[:MAX_RELATIONS_IN_PROMPT])
+        info.append(f"- 확인된 관계: {rels or '없음'} (이 밖의 가족관계는 짐작해 말하지 않는다)")
     system = SYSTEM_PROMPT + "\n\n[참고 정보]\n" + "\n".join(info)
     messages = [{"role": "assistant" if r == "ai" else "user", "content": t} for r, t in turns if t]
     return system, messages
+
+
+# ───────── 근거 검사: 어르신이 말하지 않은 관계·상황을 지어냈는지 (규칙 기반, 추가 LLM 호출 없음) ─────────
+MAX_RELATIONS_IN_PROMPT = 5
+# 어르신의 상황·감정을 짐작해 단정하는 말 ("불편하신가 봐요", "쥐가 나서 불편하신가 봅니다"). 일반 대화(generic·visit)에만 적용
+GUESS_RE = re.compile(r"(?:신가|은가|는가|나|운가|인가|셨나|었나|았나)\s?(?:봐요|봅니다|보네요|보군요)")
+GUESS_KINDS = {"generic", "visit"}
+
+
+def ungrounded_relations(text: Optional[str], grounded) -> list:
+    """로봇 문장의 가족·인물 관계 중 어르신이 말한(확인된) 관계로 뒷받침되지 않는 것. "딸" → "따님"은 근거 있음"""
+    grounded = set(grounded or ())
+    return sorted(rel for rel in relations_in(text or "", robot=True)
+                  if not (RELATION_GROUNDED_BY.get(rel, {rel}) & grounded))
+
+
+def grounding_issue(raw: Optional[str], grounded, kind: Optional[str]) -> Optional[str]:
+    """근거 없는 관계 생성 → 'ungrounded', (일반 대화에서) 근거 없는 상황·감정 짐작 → 'guess'"""
+    if ungrounded_relations(raw, grounded):
+        return "ungrounded"
+    if kind in GUESS_KINDS and raw and GUESS_RE.search(raw):
+        return "guess"
+    return None
+
+
+def is_unclear_mark(raw: Optional[str]) -> bool:
+    """LLM이 표시 문자열을 냈는지 (다른 말이 섞여도 표시가 있으면 그 응답은 쓰지 않는다)"""
+    return bool(raw) and UNCLEAR_MARK in raw
 
 
 # ───────── 출력 검증 (하나라도 걸리면 템플릿) ─────────
@@ -269,6 +309,8 @@ class LLMRequest:
         self.text: Optional[str] = None
         self.ms: Optional[int] = None
         self.error: Optional[str] = None
+        self.kind: Optional[str] = None          # 원래 응답 종류 (근거 검사 범위)
+        self.grounded: set = set()               # 요청 시점의 확인된 관계 (근거 검사 기준)
 
 
 class LLMRunner:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import itertools
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -27,8 +28,9 @@ from situation import Situation, assess
 from llm_client import client_from_env                                       # noqa: E402
 from llm_chat import (EMOTION_KO, STT_REASK_ALLOWED, LLMRunner, build_prompt,  # noqa: E402
                       check_text as check_llm_text, clean as clean_llm_text, fix_honorifics,
-                      intent_for as llm_intent_for, is_user_question, semantic_issue, trim as trim_llm_text)
-from text_analyzer import FIRE_KINDS, TextSignals, analyze
+                      grounding_issue, intent_for as llm_intent_for, is_unclear_mark, is_user_question,
+                      semantic_issue, trim as trim_llm_text)
+from text_analyzer import FIRE_KINDS, TextSignals, analyze, relations_in
 
 __all__ = ["DialogueEngine", "DialogueInput", "DialogueOutput", "Config", "State", "Strategy"]
 
@@ -38,6 +40,10 @@ CAUSE_RANK = {"no_response": 1, "danger": 2, "crisis": 3}     # 비상 중 더 �
 CAUSE_NOTE = {"danger": "위험 발화", "crisis": "극단적 선택 암시"}
 NO_TEXT = TextSignals()        # 센서 근거만 다시 평가할 때 쓰는 빈 발화 신호
 MAX_GENTLE_PROBES = 2          # 조심스러운 되묻기 연속 허용 횟수 (그다음부터는 물러서는 말)
+# 확인 질문에 대한 짧은 대답 (낱말 전체가 이것뿐일 때만. "아니 그게 아니라 딸이 와"는 정정 발화)
+CONFIRM_YES = {"응", "네", "예", "그래", "맞아", "맞아요", "맞다", "그렇지", "그럼", "어", "엉", "웅", "네네", "그래요"}
+CONFIRM_NO = {"아니", "아니요", "아뇨", "아니야", "아니에요", "아냐", "아니오", "틀렸어"}
+MAX_CONFIRM_TRIES = 2          # 개방형 다시 묻기에 내용 없는 대답이 이만큼 이어지면 화제 돌리기
 # 반복·지속 통증을 밝히는 말: 부위를 물은 직후의 대답이라도 기존 재호소 판단을 따른다 ('또'는 낱말 단위로 따로 본다)
 PAIN_REPEAT_MARKS = ("아까도", "아까부터", "계속", "자꾸", "여전히", "아직도", "또다시", "다시아", "잖아", "다니까")
 # 지난 화제를 꺼내도 되는 일상 응답 (시간·식사·약처럼 답할 내용이 있는 말에는 끼어들지 않는다)
@@ -225,6 +231,8 @@ class DialogueEngine:
             self._llm = None
         self.gen = ResponseGenerator(llm)     # 예전 동기 콜백 자리 (기본 OFF, 안전 전략에는 쓰지 않음)
         self._last_gen = None                 # 마지막 _speak의 (출력, 전략, 생성 문맥): LLM 허용 여부 판단용
+        self._text = ""                       # 이번 입력의 STT 원문 (확인 질문·관계 판단용)
+        self._prev_pend = None                # 이번 발화 직전의 확인 대기 (LLM '알아들을 수 없음' 처리 때 연속 여부 판단)
         self._resume_hint = None              # 이번 발화가 STT 재질문 뒤의 발화면 직전 화제 (LLM 문맥용)
         self.ctx = ConversationContext(self.cfg)
         self.state = State.NORMAL
@@ -248,6 +256,7 @@ class DialogueEngine:
         """입력이 있을 때마다 호출. 입력이 없어도 1초 간격으로 빈 입력을 넣어 타이머를 진행시킨다."""
         now = inp.timestamp
         text = (inp.stt or "").strip()
+        self._text = text
         sig = analyze(text)                                   # ① 입력 분석
         self._resume_hint = None
         self._state_before = self.state                       # LLM 대기 중에는 상태 전환(NORMAL↔EMOTIONAL)을 출력 시점으로 미룬다
@@ -261,6 +270,10 @@ class DialogueEngine:
             if not sig.recall_question:                       # 회상 질문에 인용된 증상은 새 기록이 아니다
                 self.ctx.note_dangers(sig.danger_kinds, now)
             self._track_unclear(sig)
+            self.ctx.turn_relations = set()
+            if not sig.stt_unclear:                           # 알아들은 발화의 관계만 '확인된 관계'로 (STT 오류 의심은 확정하지 않음)
+                self.ctx.turn_relations = relations_in(text) - self.ctx.confirmed_relations
+                self.ctx.confirmed_relations |= self.ctx.turn_relations
             if sig.rescue_like and self.ctx.recent_fall_evidence(now):
                 # 낙상 근거(15초 이내 또는 바닥 자세 지속)와 함께 들린 "알려줘"·"달려줘"는 구조 요청일 수 있다 → 안전 우선
                 sig.distress = "severe"
@@ -277,6 +290,8 @@ class DialogueEngine:
             out = self._general(inp, sig, sit, emotion_changed, now)
             if out.assessment is None:
                 out.assessment = sit.to_dict()
+        if self.session is not None:
+            self.ctx.pending_confirm = None                   # 안전 확인이 시작되면 일상 대화의 확인 대기는 버린다
         out.warnings = list(inp.warnings)
         out.emergency_active = self.session is not None and self.session.phase == "ESCALATED"
         if self.session is not None and self.session.light and self.session.phase == "WAITING":
@@ -287,8 +302,8 @@ class DialogueEngine:
         mem_out = out                         # 장기 기억 갱신은 요청 시점의 원래 출력 기준 (LLM 대기와 무관)
         if self._llm is not None:
             out = self._llm_step(out, text, now)
-        if text and not sig.stt_unclear:
-            self.ctx.resume_topic = None      # 다시 알아들었으면 돌아갈 화제는 이번 응답에서 썼다
+        if text and not sig.stt_unclear and self.ctx.pending_confirm is None:
+            self.ctx.resume_topic = None      # 다시 알아들었으면 돌아갈 화제는 이번 응답에서 썼다 (확인 대기 중이면 유지)
         if out.response_text:                 # 로봇 문장 기록은 실제로 출력하는 시점에만 (대기·폐기된 문장은 남기지 않음)
             self.ctx.add_turn("ai", out.response_text, now, out.state.value, out.strategy.value)
         # 장기 기억 갱신: 안전 확인·비상 중이거나 안전 전략 응답이면 기록하지 않는다 (화제·감정 라벨만, 원문 없음)
@@ -340,6 +355,12 @@ class DialogueEngine:
         c = self.ctx
         topic = sig.topics[0] if sig.topics else None
 
+        pend, c.pending_confirm = c.pending_confirm, None  # 확인 대기는 바로 다음 발화 한 번에만 쓴다
+        self._prev_pend = pend
+        if pend is not None and not sig.stt_unclear:
+            answered = self._confirm_answer(pend, sig)
+            if answered is not None:
+                return answered
         if sig.stt_unclear:                               # 의미 없는 인식 결과: 공감·일상 응답으로 넘기지 않고 다시 묻는다
             return self._unclear_reply(sig)
         self._resume_hint = c.resume_topic                # 재질문 뒤 다시 알아들은 발화면 직전 화제
@@ -609,10 +630,48 @@ class DialogueEngine:
         else:
             kind = "stt_retry" if n <= 1 else "stt_mic" if n == 2 else "stt_back_off"
         gen_ctx = {"kind": kind}
+        rels = sorted(relations_in(self._text) & set(R.RELATION_HONOR)) if sig.stt_unclear != "misheard_command" else []
         if kind == "stt_back_off" and self.ctx.resume_topic:   # 같은 재질문을 반복하지 않고 하던 화제로 돌아가자고 한다
             gen_ctx = {"kind": "stt_back_off_topic", "slots": {"topic_name": R.TOPIC_NAME[self.ctx.resume_topic]}}
+        elif kind == "stt_retry" and len(rels) == 1:
+            # 알아듣기 어려운 말 속에 가족 관계가 들렸으면 그 관계만 예/아니요로 확인한다 (확정하지 않음, 다른 관계로 바꾸지 않음)
+            self.ctx.pending_confirm = {"kind": "yesno", "relation": rels[0], "tries": 0}
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK,
+                               {"kind": "confirm_person", "slots": {"rel": R.RELATION_HONOR[rels[0]]}},
+                               f"STT 인식 결과가 불명확({sig.stt_unclear}), 들린 관계 '{rels[0]}' → 예/아니요로 확인 (확정 안 함)")
+        if kind in ("stt_retry", "stt_mic"):
+            self.ctx.pending_confirm = {"kind": "open", "relation": None, "tries": 0}
         return self._speak(State.NORMAL, Strategy.SMALL_TALK, gen_ctx,
                            f"STT 인식 결과가 불명확({sig.stt_unclear}, 연속 {n}회) → 실행·공감 없이 다시 묻기")
+
+    def _confirm_answer(self, pend: dict, sig: TextSignals) -> Optional[DialogueOutput]:
+        """확인 질문 바로 다음 발화. 예/아니요 질문: '응'이면 그 관계를 확인된 관계로, '아니'면 버리고 다시 묻기.
+        개방형 질문("어떤 말씀이셨는지")에는 '응'·'아니'만으로 아무것도 확인되지 않는다 → 한 번 더 묻고, 그래도 안 되면
+        기존 화제 돌리기. 내용이 있는 말(정정 포함)이면 None: 이전의 불확실한 정보는 버리고 그 말을 그대로 처리한다"""
+        c = self.ctx
+        words = re.findall(r"[가-힣]+", self._text)
+        bare_yes = bool(words) and all(w in CONFIRM_YES for w in words)
+        bare_no = bool(words) and all(w in CONFIRM_NO for w in words)
+        if not (bare_yes or bare_no) or sig.distress != "none" or sig.self_harm:
+            return None
+        if pend["kind"] == "yesno" and bare_yes:
+            c.confirmed_relations.add(pend["relation"])
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK,
+                               {"kind": "confirm_yes", "slots": {"rel": R.RELATION_HONOR[pend["relation"]]}},
+                               f"확인 질문에 '예' → 관계 '{pend['relation']}' 확인 (세션 안에서만 보관)")
+        tries = pend.get("tries", 0) + 1
+        if pend["kind"] == "yesno":                       # '아니': 들은 관계를 버리고 무엇이었는지 새로 묻는다
+            c.pending_confirm = {"kind": "open", "relation": None, "tries": 0}
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "confirm_no"},
+                               f"확인 질문에 '아니' → 관계 '{pend['relation']}' 버림, 다시 묻기")
+        if tries >= MAX_CONFIRM_TRIES:                    # 다시 물어도 내용이 없으면 기존 화제 돌리기로
+            gen_ctx = ({"kind": "stt_back_off_topic", "slots": {"topic_name": R.TOPIC_NAME[c.resume_topic]}}
+                       if c.resume_topic in R.TOPIC_NAME else {"kind": "stt_back_off"})
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK, gen_ctx,
+                               "개방형 다시 묻기에 '응'·'아니'만 반복 → 확인 그만두고 화제 돌리기")
+        c.pending_confirm = {"kind": "open", "relation": None, "tries": tries}
+        return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "confirm_open"},
+                           "개방형 다시 묻기에 '응'·'아니'만 → 아무것도 확인하지 않고 한 번 더 묻기")
 
     def _small_intent_reply(self, sig: TextSignals) -> DialogueOutput:
         intent = sig.small_intent
@@ -718,6 +777,7 @@ class DialogueEngine:
         # '긍정' 응답은 실제 발화가 긍정일 때만 (오래된 밝은 표정은 sit.valence에 남아 있어도 쓰지 않는다.
         # 60초 안의 밝은 표정은 위 joy 분기에서 이미 처리)
         if sig.positive: return "positive"
+        if sig.visit: return "visit"                         # 누가 오는지·관계는 짐작하지 않고 반가움만 나눈다
         return "generic"
 
     # ───── ④ 안전 확인 세션 ─────
@@ -998,9 +1058,12 @@ class DialogueEngine:
         user_text = turns[-1][1] if turns and turns[-1][0] == "user" else ""
         system, messages = build_prompt(intent, turns, symptoms, c.last_topic, c.prev_topic, emotion,
                                         self._resume_hint, recent_ai=c.recent_ai(3),
-                                        user_question=is_user_question(user_text))
-        reask = self._last_gen[2].get("kind") in STT_REASK_ALLOWED
+                                        user_question=is_user_question(user_text),
+                                        known_relations=c.confirmed_relations)
+        kind = self._last_gen[2].get("kind")
+        reask = kind in STT_REASK_ALLOWED
         req = self._llm.submit(out, out.response_text, system, messages, reask)
+        req.kind, req.grounded = kind, set(c.confirmed_relations)   # 근거 검사는 요청 시점의 확인된 관계로
         # 응답을 내기 전까지는 이전 상태를 유지한다: 대기 중 출력이 상태 변화로 보이면 서버가 'thinking' 표시를 끝내므로
         req.state_before = self.state = self._state_before
         return DialogueOutput(self.state, Strategy.NONE, None, reason=f"LLM 응답 준비 중 (요청 #{req.rid}): {out.reason}",
@@ -1008,6 +1071,8 @@ class DialogueEngine:
 
     def _llm_output(self, req, status: str) -> DialogueOutput:
         last = self.ctx.recent_ai(1)
+        if status != "timeout" and is_unclear_mark(req.text):
+            return self._llm_unclear_output(req)
         if status == "timeout":
             text, src, why, ms = req.fallback, "template", "timeout", None
         else:
@@ -1019,14 +1084,38 @@ class DialogueEngine:
             if why is None:
                 prev_q = bool(last) and last[0].strip().endswith("?")      # 실제로 출력된 직전 로봇 문장만
                 cand = trim_llm_text(fix_honorifics(raw), prev_q, keep_question=req.reask)
-                why = check_llm_text(cand, last[0] if last else None, self.cfg.llm_max_chars,
-                                     self.cfg.llm_min_hangul, req.reask)
+                # 실제로 말할 문장에 어르신이 말하지 않은 관계·상황이 있으면 쓰지 않는다 (잘려 나간 문장은 말하지 않으므로 제외)
+                why = grounding_issue(cand, req.grounded, req.kind) or check_llm_text(
+                    cand, last[0] if last else None, self.cfg.llm_max_chars, self.cfg.llm_min_hangul, req.reask)
             text, src, ms = (cand, "llm", req.ms) if why is None else (req.fallback, "template", req.ms)
         base = req.out
         self.state = base.state                               # 미뤄 둔 상태 전환을 출력과 함께 적용
         note = " (LLM 문장)" if src == "llm" else f" (LLM 대신 템플릿: {why})"
         return dataclasses.replace(base, response_text=text, response_source=src, llm_ms=ms, llm_fallback_reason=why,
                                    reason=base.reason + note, warnings=[], emergency_active=False)
+
+    def _llm_unclear_output(self, req) -> DialogueOutput:
+        """LLM이 '알아들을 수 없음' 표시를 냄 (규칙 판정에 걸리지 않은 의미 없는 STT 결과): 표시 문자열은 말하지 않고
+        기존 STT 재질문 흐름(고정 문장)으로 바꾼다. 이 발화에서 들은 관계는 확정하지 않는다"""
+        c = self.ctx
+        c.confirmed_relations -= c.turn_relations
+        if c.resume_topic is None and c.prev_topic in R.TOPIC_NAME:
+            c.resume_topic = c.prev_topic                 # 다시 알아들으면 이 발화 전의 화제로 돌아간다
+        prev = self._prev_pend                            # 직전 로봇 말도 다시 묻기였는지 (연속이면 마이크 안내 → 화제 돌리기)
+        tries = 0 if prev is None else prev.get("tries", 0) + 1
+        kind = "stt_retry" if prev is None else "stt_mic" if tries < MAX_CONFIRM_TRIES else "stt_back_off"
+        gen_ctx = {"kind": kind, "recent_ai": c.recent_ai()}
+        if kind == "stt_back_off" and c.resume_topic in R.TOPIC_NAME:
+            gen_ctx = {"kind": "stt_back_off_topic", "slots": {"topic_name": R.TOPIC_NAME[c.resume_topic]},
+                       "recent_ai": c.recent_ai()}
+        if kind != "stt_back_off":
+            c.pending_confirm = {"kind": "open", "relation": None, "tries": tries}
+        self.state = State.NORMAL
+        return dataclasses.replace(req.out, state=State.NORMAL, strategy=Strategy.SMALL_TALK,
+                                   response_text=self.gen.generate(Strategy.SMALL_TALK, gen_ctx),
+                                   response_source="template", llm_ms=req.ms, llm_fallback_reason="unclear",
+                                   reason=req.out.reason + " (LLM: 알아듣기 어려운 말 → 추측하지 않고 고정 문장으로 다시 묻기)",
+                                   warnings=[], emergency_active=False)
 
     # ───── 헬퍼 ─────
     @staticmethod

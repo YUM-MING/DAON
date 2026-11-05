@@ -149,6 +149,9 @@ def assess(inp, sig, ctx, cfg) -> Situation:
         # 표정 감정이 이월돼도 감사·회복 발화는 공감으로 되돌리지 않고 평상시 응답 (부정 표현이 함께 있으면 위 분기)
         valence = "positive"
         ev.append("표정은 부정이지만 감사·회복 발화 → 평상시 응답")
+    elif vision_neg and sig.greeting:
+        # "안녕?": 표정만으로 인사를 정서 공감으로 바꾸지 않는다 (부정 감정 표현이 함께 있으면 맨 위 분기에서 공감)
+        ev.append("표정은 부정이지만 인사 발화 → 평상시 인사")
     elif vision_neg:
         valence, intensity = "negative", 0.4 * (0.5 + 0.5 * vw)
         if sig.positive or sig.ok:

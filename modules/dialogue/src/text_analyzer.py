@@ -53,6 +53,9 @@ DANGER_KINDS = (("breath", ("숨이안쉬", "숨을못", "숨쉬기", "숨이막
                               "못일어서", "힘이없")))
 # --- STT 오류 (보수적인 규칙만: 안전·증상·구조 요청이 섞이면 적용하지 않는다) ---
 HANGUL_THEN_LATIN = re.compile(r"^[가-힣]+[A-Za-z]{2,}$")   # "몇ations": 한글 뒤에 영문이 붙은 낱말 ("TV를"은 영문이 앞)
+# "Rasunya가": 소문자가 섞인 4자 이상 영문 뒤에 조사만 붙은 낱말 (어르신 말을 받아쓴 결과로는 STT 오류 의심).
+# "TV가", "KBS를"처럼 짧은 대문자 약어는 해당 없음
+LATIN_THEN_PARTICLE = re.compile(r"^(?=[A-Za-z]*[a-z])[A-Za-z]{4,}(?:이가|가|이|는|은|를|을|도|랑|이랑|에|의|한테|에게|와|과)$")
 # whisper가 무음·잡음에서 자주 지어내는 문구와 실제 로그에서 확인된 결과 (INTEGRATION_STATUS: "대대 목욕수수")
 HALLUCINATIONS = ("시청해주셔서감사합니다", "구독과좋아요", "구독좋아요", "좋아요와구독", "MBC뉴스", "자막제공",
                   "다음영상에서", "대대목욕수수")
@@ -248,6 +251,48 @@ TOPICS = {
     "weather": ("날씨", "추워", "더워", "비가", "눈이"),
 }
 
+VISIT_RE = re.compile(r"놀러(?:오|온|와|왔)")      # 놀러 온다는 소식 (택배·비처럼 사람이 아닌 '오다'는 해당 없음)
+
+# --- 가족·인물 관계 (LLM 응답의 근거 검사용: 어르신이 직접 말한 관계만 로봇이 쓸 수 있다) ---
+# 관계: (어르신 발화에서 인정하는 표현, 로봇 문장에서 찾는 표현). 낱말 앞부분 일치 ("딸이", "따님께서", "손녀딸")
+RELATIONS = {
+    "딸": (("딸", "따님"), ("따님", "딸")),
+    "아들": (("아들", "아드님"), ("아드님", "아들")),
+    "손주": (("손주",), ("손주",)),
+    "손자": (("손자",), ("손자",)),
+    "손녀": (("손녀",), ("손녀",)),
+    "며느리": (("며느리", "며느님"), ("며느리", "며느님")),
+    "사위": (("사위",), ("사위",)),
+    "남편": (("남편", "영감", "바깥양반"), ("남편", "바깥양반", "부군")),
+    "아내": (("아내", "부인", "집사람", "안사람", "할멈", "마누라"), ("아내", "부인", "사모님")),
+    "자녀": (("자녀", "자식"), ("자녀", "자식")),
+    "형": (("형", "형님"), ("형님",)),
+    "언니": (("언니",), ("언니",)),
+    "오빠": (("오빠",), ("오빠",)),
+    "누나": (("누나", "누님"), ("누나", "누님")),
+    "동생": (("동생",), ("동생",)),
+    "친구": (("친구",), ("친구",)),
+}
+# 관계 표현 뒤에 오면 다른 낱말인 경우 ("딸기", "부인했어", "형편")
+RELATION_NOT_AFTER = {"딸": ("기", "꾹", "랑이", "랑거", "랑딸랑"), "부인": ("하", "했", "할", "한다", "해"),
+                      "형": ("편", "태", "광", "식", "성", "벌", "사", "상", "제", "용", "체", "평", "언", "부")}
+RELATION_PREFIXES = ("큰", "작은", "막내", "맏", "외", "친", "우리", "울", "첫째", "둘째", "셋째", "내", "제")
+# 로봇이 쓴 관계를 뒷받침하는 어르신 관계 ("손주분"은 손자·손녀 이야기로도 근거가 된다)
+RELATION_GROUNDED_BY = {"손주": {"손주", "손자", "손녀"}, "자녀": {"자녀", "딸", "아들"}}
+
+
+def relations_in(text: str, robot: bool = False) -> set:
+    """문장에 나온 가족·인물 관계 (RELATIONS의 키). robot=True면 로봇 문장용 표현으로 찾는다"""
+    found = set()
+    for word in re.findall(r"[가-힣]+", text or ""):
+        cands = [word] + [word[len(p):] for p in RELATION_PREFIXES if word.startswith(p) and len(word) > len(p)]
+        for cand in cands:
+            for rel, (user_forms, robot_forms) in RELATIONS.items():
+                for form in (robot_forms if robot else user_forms):
+                    if cand.startswith(form) and not cand[len(form):].startswith(RELATION_NOT_AFTER.get(form, ())):
+                        found.add(rel)
+    return found
+
 
 @dataclass
 class TextSignals:
@@ -307,6 +352,7 @@ class TextSignals:
     worsening: bool = False         # 지금 상태가 이전보다 나빠졌다는 말 ("지금은 더 심해"). 최근 증상 기록이 있을 때만 확인
     moan: bool = False              # 신음 감탄사만으로 된 발화 ("윽", "끙끙") → 안전 확인 (즉시 비상 아님)
     improving: bool = False         # 지금 나아지고 있다는 말 ("덜 아파", "나아졌어") — 통증 재호소·악화로 보지 않음
+    visit: bool = False             # 누가 놀러 온다·왔다는 소식 ("우리 선녀가 놀러 오기로 했어") — 누구인지는 짐작하지 않는다
     permission_ask: bool = False    # 행동을 해도 되는지 묻는 말 ("걸러도 괜찮지 않을까?") — 위험 호소도, 괜찮다는 대답도 아님
     skip_ask: bool = False          # 거르기·건너뛰기를 해도 되는지 묻는 말 ('약'이 없어도. 직전이 약 이야기면 복약 질문)
 
@@ -413,8 +459,8 @@ def _stt_unclear(tokens, core: str) -> str:
         return "hallucination"
     if not tokens or all(t.isdigit() for t in tokens):
         return "fragment"                         # 기호·숫자만 ("3 3 3"). "어... 음..." 같은 군말은 기존대로 모호한 대답
-    if any(HANGUL_THEN_LATIN.match(t) for t in tokens):
-        return "mixed"                            # "몇ations"
+    if any(HANGUL_THEN_LATIN.match(t) or LATIN_THEN_PARTICLE.match(t) for t in tokens):
+        return "mixed"                            # "몇ations", "Rasunya가"
     run = best = 1
     for a, b in zip(tokens, tokens[1:]):
         run = run + 1 if a == b else 1
@@ -835,7 +881,8 @@ def analyze(text: str) -> TextSignals:
         else "gone" if any(k in compact for k in HAZARD_GONE) else "",
         asks_listener=any(ASKS_LISTENER.search(t) for t in tokens),
         scream=scream, worsening=worsening, moan=moan, improving=_improving(text) and not worsening,
-        permission_ask=bool(permit_spans), skip_ask=_skip_ask(compact, bool(permit_spans)))
+        permission_ask=bool(permit_spans), skip_ask=_skip_ask(compact, bool(permit_spans)),
+        visit=bool(VISIT_RE.search(compact)))
 
 
 def robot_speech_flags(text: str) -> tuple:

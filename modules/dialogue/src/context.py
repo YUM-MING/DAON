@@ -37,6 +37,11 @@ class ConversationContext:
         self.last_topic: Optional[str] = None  # 직전 발화의 화제 (같은 화제면 이어가기 응답)
         self.prev_topic: Optional[str] = None  # 그 전 발화의 화제 (LLM 문맥용)
         self.last_medicine = False             # 직전 발화가 약 이야기였는지 ("약 먹었던가" 뒤 "걸러도 괜찮지 않을까?")
+        # 어르신이 이번 세션에서 직접 말한(또는 확인해 준) 가족·인물 관계. 세션 안에서만 쓰고 장기 기억에 저장하지 않는다
+        self.confirmed_relations: set = set()
+        self.turn_relations: set = set()       # 이번 발화로 새로 더한 관계 (LLM이 '알아들을 수 없음'을 알리면 되돌린다)
+        # 확인 대기: {"kind": "yesno"|"open", "relation": 관계 또는 None} — 일상 대화에서만, 안전 확인이 시작되면 지운다
+        self.pending_confirm: Optional[dict] = None
         self.resume_topic: Optional[str] = None  # STT 재질문 직전의 화제: 다시 알아들으면 이 화제로 돌아간다
         self.topic_counts: Counter = Counter() # 부정 발화에서 반복된 주제
         self.notice_sent = False

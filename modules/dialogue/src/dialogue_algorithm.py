@@ -29,7 +29,8 @@ from llm_client import client_from_env                                       # n
 from llm_chat import (EMOTION_KO, STT_REASK_ALLOWED, LLMRunner, build_prompt,  # noqa: E402
                       check_text as check_llm_text, clean as clean_llm_text, fix_honorifics, fix_name_honorific,
                       grounding_issue, intent_for as llm_intent_for, is_unclear_mark, is_user_question,
-                      semantic_issue, trim as trim_llm_text)
+                      question_type, semantic_issue, split_sentences, SYMPTOM_KINDS, trim as trim_llm_text,
+                      drop_last_question, repeats_question)
 from text_analyzer import FIRE_KINDS, TextSignals, analyze, relations_in
 
 __all__ = ["DialogueEngine", "DialogueInput", "DialogueOutput", "Config", "State", "Strategy"]
@@ -44,6 +45,15 @@ MAX_GENTLE_PROBES = 2          # 조심스러운 되묻기 연속 허용 횟수 
 CONFIRM_YES = {"응", "네", "예", "그래", "맞아", "맞아요", "맞다", "그렇지", "그럼", "어", "엉", "웅", "네네", "그래요"}
 CONFIRM_NO = {"아니", "아니요", "아뇨", "아니야", "아니에요", "아냐", "아니오", "틀렸어"}
 MAX_CONFIRM_TRIES = 2          # 개방형 다시 묻기에 내용 없는 대답이 이만큼 이어지면 화제 돌리기
+TOPIC_HOLD_TURNS = 3           # 화제·인물을 말하지 않는 이어지는 말에서 직전 화제·인물을 유지하는 사용자 턴 수
+SHORT_JUST = {"그냥", "그냥요"}  # 짧은 대답 중 '그냥': 더 캐묻지 않는다
+QUESTION_STREAK_LIMIT = 2      # 일상 대화에서 질문으로 끝난 응답이 이만큼 이어지면 다음 응답은 질문으로 끝내지 않는다
+GUESS_NEUTRAL = "guess_neutral"   # 짐작 탈락 중립 문장의 응답 종류 표시 (질문 예산 제외)
+# 새 장면을 여는 말: 시간 표현으로 시작하는 낱말, 또는 '…에 갔/다녀/…에서' 같은 장소 이동·장소 표현
+NEW_SCENE_WORDS = ("오늘", "어제", "아까", "방금", "내일", "이따", "요즘", "그저께", "지난주", "지난번", "주말")
+NEW_SCENE_PLACE_RE = re.compile(r"에\s?(?:갔|가서|다녀|들렀|왔었)|에서\s")
+SHORT_KINDS = ("short_yes", "short_no", "short_open", "short_just", "short_chain")
+EVERYDAY_STRATEGIES = {Strategy.SMALL_TALK, Strategy.EMPATHIZE, Strategy.FOLLOW_UP, Strategy.GENTLE_PROBE}
 # 반복·지속 통증을 밝히는 말: 부위를 물은 직후의 대답이라도 기존 재호소 판단을 따른다 ('또'는 낱말 단위로 따로 본다)
 PAIN_REPEAT_MARKS = ("아까도", "아까부터", "계속", "자꾸", "여전히", "아직도", "또다시", "다시아", "잖아", "다니까")
 # 지난 화제를 꺼내도 되는 일상 응답 (시간·식사·약처럼 답할 내용이 있는 말에는 끼어들지 않는다)
@@ -120,7 +130,11 @@ class ResponseGenerator:
         pool = self._pool(strategy, c)
         if c.get("slots"):                            # 빈칸을 먼저 채워야 최근 문장 비교(반복 피하기)가 맞다
             pool = [_fill(t, c["slots"]) for t in pool]
-        text = self._pick(pool, c.get("recent_ai", []))
+        budget = c.get("question_budget", 0)          # 일상 대화에서 직전까지 이어진 질문 응답 수 (제외 대상은 없음)
+        text = self._pick(pool, c.get("recent_ai", []), prefer_statement=budget >= 1)
+        if budget >= QUESTION_STREAK_LIMIT and text.strip().endswith("?"):
+            # 일상 대화에서 질문이 연속 두 번 나갔다: 이번에는 질문으로 끝내지 않는다 (끝 질문을 빼거나 진술형 문장)
+            text = drop_last_question(text) or self._pick(R.STATEMENT_FALLBACK, c.get("recent_ai", []))
         if "{time}" in text:                          # 시간 질문 응답: 현재 시각 채우기
             text = text.replace("{time}", c.get("time_text", ""))
         if "{date}" in text:                          # 날짜 질문 응답: 오늘 날짜·요일 채우기
@@ -155,6 +169,11 @@ class ResponseGenerator:
             return R.SYMPTOM_TALK[c["kind"]]
         if c.get("kind") in R.STT_TALK:               # STT 오류 다시 묻기·부르기·마이크 확인·다시 말하기
             return R.STT_TALK[c["kind"]]
+        if c.get("kind") in R.SHORT_TALK:             # 짧은 대답: 화제가 있으면 화제를 살린 문장
+            pools = R.SHORT_TALK[c["kind"]]
+            return pools.get(c.get("topic"), pools["default"])
+        if c.get("person") and c.get("kind") in R.PERSON_TALK:   # 이어지는 말에서 이야기 중인 인물 (확인된 관계만)
+            return R.PERSON_TALK[c["kind"]]
         emo = c.get("emotion") if c.get("emotion") in R.EMPATHY_LIGHT else "default"
         topic = c.get("topic")
         if strategy == Strategy.GENTLE_PROBE:
@@ -173,9 +192,14 @@ class ResponseGenerator:
         return R.SMALL_TALK.get(kind, R.SMALL_TALK["generic"])
 
     @staticmethod
-    def _pick(pool: list, recent: list) -> str:
+    def _pick(pool: list, recent: list, prefer_statement: bool = False) -> str:
         """최근에 쓴 문장은 피해서, 안 쓴 첫 문장을 고른다. 다 썼으면 가장 오래전에 쓴 문장.
-        (각 문장이 '마지막으로' 쓰인 위치를 기준으로 비교한다. 첫 위치를 쓰면 같은 문장이 계속 뽑힌다)"""
+        (각 문장이 '마지막으로' 쓰인 위치를 기준으로 비교한다. 첫 위치를 쓰면 같은 문장이 계속 뽑힌다)
+        prefer_statement: 직전 일상 응답이 질문이었으면 안 쓴 진술형 문장을 먼저 고른다"""
+        if prefer_statement:
+            statements = [t for t in pool if not t.strip().endswith("?") and t not in recent]
+            if statements:
+                return statements[0]
         fresh = [t for t in pool if t not in recent]
         if fresh:
             return fresh[0]
@@ -233,6 +257,8 @@ class DialogueEngine:
         self._last_gen = None                 # 마지막 _speak의 (출력, 전략, 생성 문맥): LLM 허용 여부 판단용
         self._text = ""                       # 이번 입력의 STT 원문 (확인 질문·관계 판단용)
         self._prev_pend = None                # 이번 발화 직전의 확인 대기 (LLM '알아들을 수 없음' 처리 때 연속 여부 판단)
+        self._out_kind = None                 # 마지막으로 만든 응답의 종류 (출력된 질문 유형 기록용)
+        self._continuing = False              # 이번 발화가 앞 이야기에 이어지는 말인지 (화제·인물 문맥 문장에만 사용)
         self._resume_hint = None              # 이번 발화가 STT 재질문 뒤의 발화면 직전 화제 (LLM 문맥용)
         self.ctx = ConversationContext(self.cfg)
         self.state = State.NORMAL
@@ -306,6 +332,10 @@ class DialogueEngine:
             self.ctx.resume_topic = None      # 다시 알아들었으면 돌아갈 화제는 이번 응답에서 썼다 (확인 대기 중이면 유지)
         if out.response_text:                 # 로봇 문장 기록은 실제로 출력하는 시점에만 (대기·폐기된 문장은 남기지 않음)
             self.ctx.add_turn("ai", out.response_text, now, out.state.value, out.strategy.value)
+            self.ctx.last_question = self._question_record(out)
+            exempt = self._budget_exempt(out.state, out.strategy, self._out_kind)
+            self.ctx.q_streak = 0 if exempt or not out.response_text.strip().endswith("?") else self.ctx.q_streak + 1
+            self.ctx.last_out_kind = self._out_kind
         # 장기 기억 갱신: 안전 확인·비상 중이거나 안전 전략 응답이면 기록하지 않는다 (화제·감정 라벨만, 원문 없음)
         if (self.memory is not None and self.state != State.SAFETY_CHECK
                 and mem_out.strategy not in SAFETY_STRATEGIES):
@@ -357,6 +387,7 @@ class DialogueEngine:
 
         pend, c.pending_confirm = c.pending_confirm, None  # 확인 대기는 바로 다음 발화 한 번에만 쓴다
         self._prev_pend = pend
+        lq, c.last_question = c.last_question, None        # 직전 일상 질문도 바로 다음 발화 한 번에만 쓴다
         if pend is not None and not sig.stt_unclear:
             answered = self._confirm_answer(pend, sig)
             if answered is not None:
@@ -404,6 +435,8 @@ class DialogueEngine:
                                "표정-발화 불일치 → 조심스럽게 되묻기")
 
         c.probe_streak = 0                                # 다른 응답이 오면 되묻기 연속 횟수 초기화
+        topic = self._topic_in_context(sig, sit, topic)   # 화제 없는 이어지는 말("기대돼")은 직전 화제를 잠시 유지
+        self._track_focus(sig, sit, self._text)
         prev_topic, c.last_topic = c.last_topic, topic    # 직전 턴과 같은 화제인지 (이어가기 응답용)
         c.prev_topic = prev_topic
         if (c.last_medicine and sig.skip_ask and not sig.medicine_state
@@ -413,6 +446,10 @@ class DialogueEngine:
         c.last_medicine = bool(sig.medicine or sig.medicine_state)
         negative = sit.valence == "negative"
         c.register_user_turn(negative, sig.topics)
+        if pend is None:                                  # 순서: 확인 대기 → 통증 대답(위) → 일반 질문에 대한 짧은 대답
+            short = self._short_answer(sig, lq)
+            if short is not None:
+                return short
 
         if sig.recall_question and sig.danger_kinds:     # "아까 가슴이 아프다고 했지?": 위험이 무시되지 않게 먼저 판단
             out = self._recall_danger(sig, sit, now)
@@ -449,7 +486,7 @@ class DialogueEngine:
             happy_face = c.last["emotion"] == "happy" and now - c.emotion_ts <= self.cfg.emotion_ttl
             joy = sig.joy or happy_face             # 기쁨은 화제 응답보다 먼저 함께 기뻐한다
             kind = self._small_talk_kind(sig, sit, topic, joy, prev_topic)
-            gen_ctx = {"kind": kind}
+            gen_ctx = {"kind": kind, **self._person_slots(kind)}   # 대체 문장(템플릿)에 문맥 인물 (확인된 관계만)
             if kind == "time":
                 gen_ctx["time_text"] = korean_time(now)   # 입력 시각 기준 (테스트에서 시각 주입 가능)
             elif kind == "date":
@@ -461,7 +498,8 @@ class DialogueEngine:
                 c.mark_symptoms_followed()
                 if sig.recovered:                         # "괜찮아졌어/나아졌어"는 위험 증상이 풀렸다는 분명한 말
                     c.resolve_dangers()
-            elif kind in R.CHECKIN_KINDS and "fixed_text" not in gen_ctx:
+            elif kind in R.CHECKIN_KINDS and "fixed_text" not in gen_ctx and not self._user_asked():
+                # 어르신이 물어본 말에는 이전 증상 안부를 붙이지 않는다 (다음 알맞은 턴으로 미룸)
                 gen_ctx = self._with_checkin(kind, gen_ctx, now)
             if gen_ctx.get("kind") == "generic" and self._resume_hint in R.TOPIC_NAME:
                 # STT 재질문 뒤 다시 알아들었는데 특별한 화제가 없는 말: 재질문 전에 하던 화제로 돌아간다
@@ -492,6 +530,119 @@ class DialogueEngine:
                               + (f", 주제 '{topic}' 반영" if topic in R.TOPIC_EMPATHY else ""))
         out.notice = notice
         return out
+
+    # ───── 질문 예산 (일상 대화에서만) ─────
+    def _budget_exempt(self, state, strategy, kind: Optional[str]) -> bool:
+        """질문 예산의 영향을 받지 않는 응답: 안전 확인·STT 재질문·1단계 확인 질문·통증 확인·복약·짐작 탈락 중립 문장,
+        지난 화제 언급(장기 기억), 표정-발화 불일치 확인(GENTLE_PROBE, 마음을 확인하는 필수 질문).
+        이런 응답이 나가면 연속 질문 수를 0으로 되돌린다"""
+        kind = kind or ""
+        return (self.session is not None or state == State.SAFETY_CHECK or strategy not in EVERYDAY_STRATEGIES
+                or strategy == Strategy.GENTLE_PROBE
+                or kind in SYMPTOM_KINDS or kind in R.STT_TALK or kind.startswith("medicine")
+                or kind in (GUESS_NEUTRAL, "recall"))
+
+    # ───── 짧은 대답 (일상 질문 직후, 발화 전체가 "응/아니/맞아/그냥"일 때만) ─────
+    def _question_record(self, out: DialogueOutput) -> Optional[dict]:
+        """실제로 출력된 일상 대화 문장이 질문이면 그 유형을 기록. 안전 확인·STT 재질문·확인 질문·증상 질문은 기록하지 않는다
+        (그쪽 대답은 각자의 기존 흐름이 해석한다). 유형이 모호하면 None → 다음 짧은 대답은 기존 경로"""
+        kind = self._out_kind
+        if (self.session is not None or out.state == State.SAFETY_CHECK or out.strategy not in EVERYDAY_STRATEGIES
+                or kind in SYMPTOM_KINDS or kind in R.STT_TALK or (kind or "").startswith("medicine")):
+            return None
+        qtype = question_type(out.response_text)
+        if qtype is None:
+            return None
+        return {"type": qtype, "text": split_sentences(out.response_text)[-1], "topic": self.ctx.last_topic}
+
+    def _short_answer(self, sig: TextSignals, lq: Optional[dict]) -> Optional[DialogueOutput]:
+        """직전 일상 질문에 대한 짧은 대답. 예/아니요 질문이면 '응'·'아니'를 그 질문의 대답으로 이어 가고,
+        개방형 질문의 '응'·'아니'는 긍정·부정으로 보지 않는다(질문 없는 중립 응답). '그냥'은 더 캐묻지 않는다.
+        직전 질문이 없거나 유형이 모호하면 None (기존 경로)"""
+        words = re.findall(r"[가-힣]+", self._text)
+        if len(words) != 1 or sig.distress != "none" or sig.self_harm:
+            return None
+        w = words[0]
+        if w not in CONFIRM_YES | CONFIRM_NO | SHORT_JUST:
+            return None
+        topic = self.ctx.last_topic                       # 화제가 있으면 화제를 살린 문장 (2-2에서 유지된 화제)
+        if lq is None:
+            if self.ctx.last_out_kind in SHORT_KINDS:     # 짧은 대답이 이어짐: 같은 질문을 되풀이하지 않고 기다린다
+                return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "short_chain", "topic": topic},
+                                   f"짧은 대답 연속 ('{w}') → 같은 질문을 반복하지 않고 진술형으로 기다리기")
+            return None
+        if w in SHORT_JUST:
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "short_just", "topic": topic},
+                               f"직전 질문 뒤 '{w}' → 더 캐묻지 않기")
+        if lq["type"] == "open":
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "short_open", "topic": topic},
+                               f"개방형 질문 뒤 '{w}' → 긍정·부정으로 보지 않고 질문 없는 중립 응답")
+        kind = "short_yes" if w in CONFIRM_YES else "short_no"
+        return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": kind, "question": lq["text"], "topic": topic},
+                           f"예/아니요 질문 「{lq['text']}」에 '{w}' → 같은 이야기로 이어 가기")
+
+    # ───── 화제·인물 유지 (일상 대화에서만) ─────
+    def _own_subject(self, sig: TextSignals, sit: Optional[Situation]) -> bool:
+        """이번 발화가 스스로 새 이야기를 꺼냈는지 (질문·인사·식사·약·잠·피곤·불편·통증 등) → 직전 화제를 끌고 오지 않는다"""
+        return bool(sig.question or sig.greeting or sig.goodnight or sig.about_ai or sig.meal_state or sig.meal
+                    or sig.meal_memory or sig.medicine or sig.medicine_state or sig.boredom or sig.sleep_bad
+                    or sig.tired or sig.discomfort or sig.small_intent or sig.recall_question or sig.visit or sig.grief
+                    or (sit is not None and sit.soft_pain) or self._user_asked() or self._opens_new_scene())
+
+    def _opens_new_scene(self) -> bool:
+        """시간·장소로 새 장면을 여는 말("오늘 시장에 갔어", "어제는 병원 다녀왔어"): 앞 화제·인물을 끌고 오지 않는다"""
+        words = re.findall(r"[가-힣]+", self._text)
+        return any(w.startswith(NEW_SCENE_WORDS) for w in words) or bool(NEW_SCENE_PLACE_RE.search(self._text))
+
+    def _user_asked(self) -> bool:
+        """어르신이 질문했는지. "아니"처럼 짧은 대답 하나는 '-니'로 끝나도 질문이 아니다"""
+        words = re.findall(r"[가-힣]+", self._text)
+        if len(words) == 1 and words[0] in CONFIRM_YES | CONFIRM_NO | SHORT_JUST:
+            return False
+        return is_user_question(self._text)
+
+    def _topic_in_context(self, sig: TextSignals, sit: Situation, topic: Optional[str]) -> Optional[str]:
+        """이번 발화의 화제. 화제가 없고 새 이야기를 꺼내지 않은 이어지는 말이면 직전 화제를 사용자 TOPIC_HOLD_TURNS턴까지 유지.
+        새 화제가 나오면 바로 바꾸고, 새 이야기를 꺼내거나 기간이 지나면 놓는다. STT 재질문 뒤에는 resume_topic이 우선"""
+        c = self.ctx
+        self._continuing = topic is None and not self._own_subject(sig, sit)   # 앞 이야기에 이어지는 말인지 (2-5 재사용)
+        if topic is not None:
+            c.topic_age = 0
+            return topic
+        if (c.last_topic is not None and c.resume_topic is None and c.topic_age < TOPIC_HOLD_TURNS
+                and self._continuing):
+            c.topic_age += 1
+            return c.last_topic
+        c.topic_age = 0
+        return None
+
+    def _person_slots(self, kind: str) -> dict:
+        """템플릿(= LLM 시간 초과·실패·탈락 때의 대체 문장)에 인물을 넣을지. LLM 의도는 바뀌지 않는다.
+        - visit: 이번 발화에서 직접 말한 확인된 관계가 하나일 때만 ("손녀가 놀러 온대" → "손녀분이 놀러 오신다니…")
+        - 이어가기·일반 응답: 이번 발화가 앞 이야기에 이어지는 말이고, 2-2의 이야기 중인 인물이 유효할 때만
+          (새 화제·요청이면 이전 인물을 쓰지 않는다. 확인된 관계가 있다는 것만으로는 쓰지 않는다)"""
+        c = self.ctx
+        if kind == "visit":
+            rels = sorted(relations_in(self._text) & c.confirmed_relations & set(R.RELATION_HONOR))
+            if len(rels) == 1:
+                return {"person": True, "slots": {"rel_subj": _josa(R.RELATION_HONOR[rels[0]], "이", "가")}}
+            return {}
+        if (kind in R.PERSON_TALK and self._continuing and c.focus_relation in c.confirmed_relations
+                and c.focus_relation in R.RELATION_HONOR):
+            return {"person": True, "slots": {"rel": R.RELATION_HONOR[c.focus_relation]}}
+        return {}
+
+    def _track_focus(self, sig: TextSignals, sit: Situation, text: str) -> None:
+        """진행 중인 인물: 이번 세션에서 확인된 관계 중 어르신이 가장 최근에 말한 것만 (새 인물을 만들지 않는다).
+        말하지 않는 이어지는 말이면 TOPIC_HOLD_TURNS턴까지 유지, 새 이야기를 꺼내면 놓는다"""
+        c = self.ctx
+        mentioned = [r for r in sorted(relations_in(text)) if r in c.confirmed_relations]
+        if mentioned:
+            c.focus_relation, c.focus_age = mentioned[0], 0
+        elif c.focus_relation is not None:
+            c.focus_age += 1
+            if c.focus_age > TOPIC_HOLD_TURNS or self._own_subject(sig, sit):
+                c.focus_relation, c.focus_age = None, 0
 
     # ───── 이번 대화의 증상 기억 (세션 단위, 장기 기억과 별개) ─────
     def _part_answer_notes(self, sig: TextSignals, text: str) -> list:
@@ -656,6 +807,7 @@ class DialogueEngine:
             return None
         if pend["kind"] == "yesno" and bare_yes:
             c.confirmed_relations.add(pend["relation"])
+            c.focus_relation, c.focus_age = pend["relation"], 0
             return self._speak(State.NORMAL, Strategy.SMALL_TALK,
                                {"kind": "confirm_yes", "slots": {"rel": R.RELATION_HONOR[pend["relation"]]}},
                                f"확인 질문에 '예' → 관계 '{pend['relation']}' 확인 (세션 안에서만 보관)")
@@ -726,7 +878,8 @@ class DialogueEngine:
     def _with_memory(self, sig: TextSignals, kind: str, gen_ctx: dict) -> dict:
         """장기 기억이 켜졌을 때만: 새 세션 첫 2턴 안에 지난 화제를 한 번 꺼내고, 그 대답을 이어서 받는다."""
         recalled, self._just_recalled = self._just_recalled, None
-        if recalled in ("health", "sleep") and kind in RECALL_KINDS | {"goodnight", "relieved"}:
+        # (화제 유지로 같은 화제의 이어가기 응답이 되어도 지난 화제 언급에 대한 대답으로 본다)
+        if recalled in ("health", "sleep") and kind in RECALL_KINDS | {"goodnight", "relieved", "continue"}:
             better = sig.recovered or sig.positive or (sig.ok_explicit and not sig.negative)                 or (recalled == "sleep" and sig.sleep_well)
             if better and not sig.discomfort and not sig.sleep_bad:
                 return {"kind": "relieved"}       # "이제 괜찮아/좋아졌어/잘 자" → 다행이에요
@@ -770,6 +923,8 @@ class DialogueEngine:
         if sig.discomfort: return "health_ack"              # 이미 말한 불편감은 되묻지 않고 받아준다
         if sig.sleep_bad: return "sleep_bad"                # 잠을 못 잤다는 말은 다시 묻지 않고 받아준다
         if sig.tired: return "tired"                        # 피곤하다는 말은 쉬도록 받아준다
+        # 방문 소식은 가족 화제보다 먼저: "손녀가 놀러 온대"도 방문 의도(관계 짐작 금지, 반가움 나누기)로 간다
+        if sig.visit: return "visit"
         if topic in R.SMALL_TALK:
             if topic == prev_topic:                         # 직전 턴과 같은 화제: 처음 꺼내는 말 대신 이어가기
                 return "continue_family" if topic == "family" else "continue"
@@ -777,7 +932,6 @@ class DialogueEngine:
         # '긍정' 응답은 실제 발화가 긍정일 때만 (오래된 밝은 표정은 sit.valence에 남아 있어도 쓰지 않는다.
         # 60초 안의 밝은 표정은 위 joy 분기에서 이미 처리)
         if sig.positive: return "positive"
-        if sig.visit: return "visit"                         # 누가 오는지·관계는 짐작하지 않고 반가움만 나눈다
         return "generic"
 
     # ───── ④ 안전 확인 세션 ─────
@@ -1059,11 +1213,13 @@ class DialogueEngine:
         system, messages = build_prompt(intent, turns, symptoms, c.last_topic, c.prev_topic, emotion,
                                         self._resume_hint, recent_ai=c.recent_ai(3),
                                         user_question=is_user_question(user_text),
-                                        known_relations=c.confirmed_relations)
+                                        known_relations=c.confirmed_relations, focus=c.focus_relation)
         kind = self._last_gen[2].get("kind")
         reask = kind in STT_REASK_ALLOWED
         req = self._llm.submit(out, out.response_text, system, messages, reask)
         req.kind, req.grounded = kind, set(c.confirmed_relations)   # 근거 검사는 요청 시점의 확인된 관계로
+        # 질문 예산: 제외 대상(STT 재질문 등)이면 None → 질문을 건드리지 않는다
+        req.budget = None if reask or self._budget_exempt(out.state, self._last_gen[1], kind) else c.q_streak
         # 응답을 내기 전까지는 이전 상태를 유지한다: 대기 중 출력이 상태 변화로 보이면 서버가 'thinking' 표시를 끝내므로
         req.state_before = self.state = self._state_before
         return DialogueOutput(self.state, Strategy.NONE, None, reason=f"LLM 응답 준비 중 (요청 #{req.rid}): {out.reason}",
@@ -1088,10 +1244,21 @@ class DialogueEngine:
                 # 실제로 말할 문장에 어르신이 말하지 않은 관계·상황이 있으면 쓰지 않는다 (잘려 나간 문장은 말하지 않으므로 제외)
                 why = grounding_issue(cand, req.grounded, req.kind) or check_llm_text(
                     cand, last[0] if last else None, self.cfg.llm_max_chars, self.cfg.llm_min_hangul, req.reask)
+            if why is None and req.budget is not None and cand.endswith("?"):
+                # 질문 예산이 찼거나(연속 두 번) 최근에 한 질문을 되풀이하면 끝 질문을 뺀다. 남는 말이 없으면 진술형 템플릿
+                over = req.budget >= QUESTION_STREAK_LIMIT
+                repeated = repeats_question(cand, self.ctx.recent_ai(3))
+                if over or repeated:
+                    cand = drop_last_question(cand)
+                    if cand is None:
+                        why = "question_budget" if over else "repeat_question"
             text, src, ms = (cand, "llm", req.ms) if why is None else (req.fallback, "template", req.ms)
+            if why in ("question_budget", "repeat_question") and req.fallback.strip().endswith("?"):
+                text = drop_last_question(req.fallback) or self.gen._pick(R.STATEMENT_FALLBACK, self.ctx.recent_ai())
             if why == "guess" and req.kind == "generic":      # 짐작 탈락: "그러시군요" 대신 중립 문장
                 text = self.gen._pick(R.GUESS_FALLBACK, self.ctx.recent_ai())
         base = req.out
+        self._out_kind = GUESS_NEUTRAL if (why == "guess" and req.kind == "generic") else req.kind
         self.state = base.state                               # 미뤄 둔 상태 전환을 출력과 함께 적용
         note = " (LLM 문장)" if src == "llm" else f" (LLM 대신 템플릿: {why})"
         return dataclasses.replace(base, response_text=text, response_source=src, llm_ms=ms, llm_fallback_reason=why,
@@ -1102,6 +1269,8 @@ class DialogueEngine:
         기존 STT 재질문 흐름(고정 문장)으로 바꾼다. 이 발화에서 들은 관계는 확정하지 않는다"""
         c = self.ctx
         c.confirmed_relations -= c.turn_relations
+        if c.focus_relation in c.turn_relations:          # 알아듣지 못한 말에서 나온 인물은 이야기 중인 사람으로 두지 않는다
+            c.focus_relation, c.focus_age = None, 0
         if c.resume_topic is None and c.prev_topic in R.TOPIC_NAME:
             c.resume_topic = c.prev_topic                 # 다시 알아들으면 이 발화 전의 화제로 돌아간다
         prev = self._prev_pend                            # 직전 로봇 말도 다시 묻기였는지 (연속이면 마이크 안내 → 화제 돌리기)
@@ -1114,6 +1283,7 @@ class DialogueEngine:
         if kind != "stt_back_off":
             c.pending_confirm = {"kind": "open", "relation": None, "tries": tries}
         self.state = State.NORMAL
+        self._out_kind = kind
         return dataclasses.replace(req.out, state=State.NORMAL, strategy=Strategy.SMALL_TALK,
                                    response_text=self.gen.generate(Strategy.SMALL_TALK, gen_ctx),
                                    response_source="template", llm_ms=req.ms, llm_fallback_reason="unclear",
@@ -1134,8 +1304,11 @@ class DialogueEngine:
     def _speak(self, state, strategy, gen_ctx, reason) -> DialogueOutput:
         self.state = state
         gen_ctx = {**gen_ctx, "history": self.ctx.recent_texts(), "recent_ai": self.ctx.recent_ai()}
+        if not self._budget_exempt(state, strategy, gen_ctx.get("kind")):
+            gen_ctx["question_budget"] = self.ctx.q_streak      # 일상 대화의 질문 예산 (안전·STT·확인·증상·복약 제외)
         out = DialogueOutput(state, strategy, self.gen.generate(strategy, gen_ctx), reason=reason)
         self._last_gen = (out, strategy, gen_ctx)
+        self._out_kind = gen_ctx.get("kind")
         return out
 
     # ───── 비상 이후: 응답 있음 ≠ 안전 확인 ─────

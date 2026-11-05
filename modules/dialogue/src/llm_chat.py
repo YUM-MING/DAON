@@ -20,12 +20,13 @@ from text_analyzer import RELATION_GROUNDED_BY, relations_in, robot_speech_flags
 SMALL_TALK_ALLOWED = {
     "greeting", "thanks", "goodnight", "meal", "meal_done", "meal_not", "meal_ask", "boredom", "positive",
     "joy", "joy_family", "joy_health", "weather", "family", "health", "good_day", "tired", "sleep_bad", "sleep",
-    "continue", "continue_family", "generic", "resume_topic", "meal_memory", "visit",
+    "continue", "continue_family", "generic", "resume_topic", "meal_memory", "visit", "short_yes", "short_no",
 }
 SMALL_TALK_FORBIDDEN = {
     "about_ai", "time", "weather_ask", "abilities", "recall", "back_off", "relieved", "improving", "medicine",
     "health_ack", "wait", "medicine_missed", "medicine_ask", "medicine_refuse", "date", "date_unknown",
     "medicine_check", "medicine_check_pain", "medicine_check_pain_nopart",
+    "short_open", "short_just", "short_chain",       # 질문 없는 고정 문장이어야 하는 짧은 대답 응답
 }
 STT_REASK_ALLOWED = {"stt_retry", "stt_mic"}            # 안전 확인 밖의 일반 재질문만 (재질문 표지가 있어야 통과)
 OTHER_STRATEGIES_ALLOWED = {Strategy.EMPATHIZE, Strategy.FOLLOW_UP, Strategy.GENTLE_PROBE}
@@ -33,11 +34,11 @@ SYMPTOM_KINDS = {"pain_soft", "pain_soft_nopart", "pain_bearable", "recall_sympt
                  "checkin_nopart"}
 
 KIND_INTENT = {
-    "greeting": "인사에 반갑게 답하고 안부를 묻기",
+    "greeting": "인사에 반갑게 답하기 (안부 질문은 필요할 때만 하나)",
     "thanks": "고맙다는 말에 따뜻하게 답하기",
     "goodnight": "잘 자라는 인사에 편안한 밤 인사로 답하기",
-    "meal": "식사 이야기에 관심을 보이고 이어 묻기",
-    "meal_done": "식사를 하셨다는 말에 반응하고 무엇이 맛있었는지 묻기",
+    "meal": "식사 이야기에 관심을 보이며 공감하기 (질문은 필요할 때만 하나)",
+    "meal_done": "식사를 하셨다는 말에 반가워하기 (무엇을 드셨는지 묻는 것은 필요할 때만)",
     "meal_not": "아직 식사를 안 하셨다는 말에 가볍게 식사를 권하기",
     "meal_ask": "무엇을 먹을지 고민하시는 말에 함께 고민해 주기",
     "boredom": "심심하다는 말에 공감하고 함께 이야기할 거리를 찾기",
@@ -46,25 +47,27 @@ KIND_INTENT = {
     "joy_family": "가족 이야기로 기뻐하시는 말에 함께 기뻐하기",
     "joy_health": "몸이 좋아졌다는 기쁜 말에 함께 기뻐하기",
     "weather": "날씨 이야기에 맞장구치기 (실제 날씨를 지어내지 않기)",
-    "family": "가족 이야기에 관심을 보이고 이어 묻기",
+    "family": "가족 이야기에 관심을 보이며 공감하기 (질문은 필요할 때만 하나)",
     "health": "건강·병원 이야기에 진단 없이 공감하기",
     "good_day": "좋았던 하루 이야기에 함께 기뻐하기",
     "tired": "피곤하다는 말에 공감하고 쉬시라고 하기",
     "sleep_bad": "잠을 잘 못 주무셨다는 말에 공감하기",
-    "sleep": "잠 이야기에 공감하고 이어 묻기",
-    "continue": "같은 화제를 이어 가며 자연스럽게 다음 이야기를 묻기",
-    "continue_family": "가족 이야기를 이어 가며 자연스럽게 다음 이야기를 묻기",
-    "generic": "말씀에 공감하고 관련된 질문 하나로 대화를 이어 가기",
+    "sleep": "잠 이야기에 공감하기 (질문은 필요할 때만 하나)",
+    "continue": "같은 화제를 이어 가며 공감하기 (다음 이야기를 묻는 것은 필요할 때만 하나)",
+    "continue_family": "가족 이야기를 이어 가며 공감하기 (다음 이야기를 묻는 것은 필요할 때만 하나)",
+    "generic": "말씀에 공감하며 대화를 이어 가기 (질문은 필요할 때만 하나)",
     "visit": "누가 놀러 온다는 소식에 반가움을 함께 나누기 (누구인지·어떤 관계인지 짐작해 붙이지 않기)",
-    "meal_memory": "추억을 들어주고 공감하며 그 음식에 대해 묻기 (방금 식사하신 것이 아님)",
+    "short_yes": "직전 질문에 어르신이 '응'이라고 답하심: 그 대답을 받아 같은 이야기를 자연스럽게 이어 가기 (새 사실을 지어내지 않기)",
+    "short_no": "직전 질문에 어르신이 '아니'라고 답하심: 그대로 받아들이고 캐묻지 않기 (새 사실을 지어내지 않기)",
+    "meal_memory": "추억을 들어주고 공감하며 그 음식에 대해 묻기 (방금 식사하신 것이 아님. 질문은 필요할 때만, 마음을 함께 나누는 것이 먼저)",
     "resume_topic": "잘 못 알아들어 다시 여쭌 뒤 다시 말씀하심: 직전 화제를 기억해서 자연스럽게 이어 가기",
     "stt_retry": "말씀을 알아듣지 못함: 내용을 추측해 답하지 말고, 다시 한 번 말씀해 달라고 자연스럽게 부탁하기",
     "stt_mic": "두 번째로 알아듣지 못함: 조금 가까이에서 천천히 말씀해 달라고 부탁하기 (내용 추측 금지)",
 }
 STRATEGY_INTENT = {
     Strategy.EMPATHIZE: "감정에 공감하기",
-    Strategy.FOLLOW_UP: "같은 고민이 이어져 걱정된다고 말하고 후속 질문 하나 하기",
-    Strategy.GENTLE_PROBE: "표정이 어두운데 괜찮다고 하심: 캐묻지 말고 조심스럽게 마음을 묻기",
+    Strategy.FOLLOW_UP: "같은 고민이 이어져 걱정된다고 말하기 (후속 질문은 필요할 때만 하나)",
+    Strategy.GENTLE_PROBE: "표정이 어두운데 괜찮다고 하심: 캐묻지 말고 조심스럽게 마음을 살피기 (질문은 필요할 때만 하나)",
 }
 TOPIC_KO = {"lonely": "외로움", "family": "가족", "health": "건강", "sleep": "잠", "weather": "날씨", "grief": "그리운 분"}
 EMOTION_KO = {"sad": "슬퍼 보임", "angry": "언짢아 보임", "fear": "불안해 보임", "happy": "밝아 보임"}
@@ -155,7 +158,10 @@ def intent_for(strategy: Strategy, gen_ctx: dict) -> Optional[str]:
         return None
     if strategy == Strategy.SMALL_TALK:
         if kind in SMALL_TALK_ALLOWED or kind in STT_REASK_ALLOWED:
-            return KIND_INTENT.get(kind)
+            intent = KIND_INTENT.get(kind)
+            if intent and gen_ctx.get("question"):        # 짧은 대답: 어떤 질문에 대한 대답인지 함께 준다
+                intent += f" (직전 질문: 「{gen_ctx['question']}」)"
+            return intent
         return None
     if strategy in OTHER_STRATEGIES_ALLOWED:
         if kind in SYMPTOM_KINDS:
@@ -166,7 +172,7 @@ def intent_for(strategy: Strategy, gen_ctx: dict) -> Optional[str]:
 
 def build_prompt(intent: str, turns: list, symptoms: list, topic: Optional[str], prev_topic: Optional[str],
                  emotion: Optional[str], resume_topic: Optional[str], recent_ai=(), user_question: bool = False,
-                 known_relations=None) -> tuple:
+                 known_relations=None, focus: Optional[str] = None) -> tuple:
     """(system, messages). turns: [(role, text)] 최근 것까지 (role: user|ai). 식별 정보는 넣지 않는다.
     recent_ai: 실제로 출력된 최근 로봇 문장(오래된 것부터, 최대 3개). 마지막 문장이 질문이면 이번에는 질문하지 않도록 힌트"""
     info = [f"- 이번 응답의 의도: {intent}"]
@@ -187,6 +193,9 @@ def build_prompt(intent: str, turns: list, symptoms: list, topic: Optional[str],
         info.append("- 이번 대화에서 말씀하신 불편: " + ", ".join(symptoms) + " (진단·조언하지 말 것)")
     if emotion:
         info.append(f"- 표정 참고(확실하지 않음): {emotion}")
+    if focus or topic:
+        info.append(f"- 지금 이야기 중인 사람·화제: {focus or '없음'} · {TOPIC_KO.get(topic, topic) or '없음'} "
+                    "(짧거나 이어지는 말이면 이 문맥으로 답한다)")
     if known_relations is not None:
         rels = ", ".join(sorted(known_relations)[:MAX_RELATIONS_IN_PROMPT])
         info.append(f"- 확인된 관계: {rels or '없음'} (이 밖의 가족관계는 짐작해 말하지 않는다)")
@@ -294,6 +303,56 @@ def semantic_issue(text: str) -> Optional[str]:
 SENTENCE_RE = re.compile(r"[^.?!…]+[.?!…]*")
 
 
+# 로봇 질문 유형 (짧은 대답 해석용). 의문사가 있으면 개방형, 예/아니요 어미면 예/아니요형, 그 밖(부탁형 등)은 모호 → None
+WH_WORDS = ("뭐", "무엇", "무슨", "어떤", "어떻", "어떠", "어디", "언제", "누구", "누가", "왜", "얼마", "몇", "어느")
+REQUEST_MARKS = ("주시겠", "주실래", "주세요", "말씀해", "이야기해")
+YESNO_END_RE = re.compile(r"(?:세요|셨어요|셨나요|나요|신가요|시죠|었어요|았어요|였어요)\?$")
+
+
+def question_type(text: Optional[str]) -> Optional[str]:
+    """출력된 로봇 문장의 마지막 문장이 질문이면 'open' | 'yesno', 질문이 아니거나 판단이 모호하면 None"""
+    sents = split_sentences(text or "")
+    last = sents[-1] if sents else ""
+    if not last.endswith("?"):
+        return None
+    if any(w in last for w in WH_WORDS):
+        return "open"
+    if any(m in last for m in REQUEST_MARKS):
+        return None
+    return "yesno" if YESNO_END_RE.search(last) else None
+
+
+def drop_last_question(text: Optional[str]) -> Optional[str]:
+    """끝의 질문 문장들을 뺀 진술 부분. 남는 진술 문장이 없으면 None (빈 응답을 만들지 않는다)"""
+    sents = split_sentences(text or "")
+    while sents and sents[-1].endswith("?"):
+        sents.pop()
+    return " ".join(sents) if sents else None
+
+
+def _bigrams(s: str) -> set:
+    s = re.sub(r"[^가-힣]", "", s)
+    return {s[i:i + 2] for i in range(len(s) - 1)}
+
+
+# 질문 반복 판정: 마지막 질문 문장이 최근 로봇 질문과 글자 두 개 묶음 기준으로 이만큼 겹치면 같은 질문으로 본다
+REPEAT_QUESTION_OVERLAP = 0.55
+
+
+def repeats_question(text: Optional[str], recent_ai=()) -> bool:
+    """이번 문장의 마지막 질문이 최근 로봇 질문과 사실상 같은 질문인지 ("어떤 이야기를 하셨나요?" ↔ "어떤 이야기를 나누셨나요?")"""
+    sents = split_sentences(text or "")
+    if not sents or not sents[-1].endswith("?"):
+        return False
+    mine = _bigrams(sents[-1].split(",")[-1])          # "말씀해 주세요, 딸과 어떤 …?" → 쉼표 뒤 질문 부분만 비교
+    for prev in recent_ai:
+        for q in (s for s in split_sentences(prev or "") if s.endswith("?")):
+            other = _bigrams(q.split(",")[-1])
+            if mine and other and len(mine & other) / min(len(mine), len(other)) >= REPEAT_QUESTION_OVERLAP:
+                return True
+    return False
+
+
 def split_sentences(text: str) -> list:
     """'.', '?', '!', '…' 기준 문장 나누기 (말줄임표·연속 부호로 빈 문장이 생기지 않게)"""
     return [s.strip() for s in SENTENCE_RE.findall(text) if any(c.isalnum() for c in s)]
@@ -338,6 +397,7 @@ class LLMRequest:
         self.error: Optional[str] = None
         self.kind: Optional[str] = None          # 원래 응답 종류 (근거 검사 범위)
         self.grounded: set = set()               # 요청 시점의 확인된 관계 (근거 검사 기준)
+        self.budget: Optional[int] = None        # 요청 시점의 연속 질문 수 (None: 질문 예산 제외 대상)
 
 
 class LLMRunner:

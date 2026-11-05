@@ -40,6 +40,13 @@ class ConversationContext:
         # 어르신이 이번 세션에서 직접 말한(또는 확인해 준) 가족·인물 관계. 세션 안에서만 쓰고 장기 기억에 저장하지 않는다
         self.confirmed_relations: set = set()
         self.turn_relations: set = set()       # 이번 발화로 새로 더한 관계 (LLM이 '알아들을 수 없음'을 알리면 되돌린다)
+        self.focus_relation: Optional[str] = None   # 지금 이야기 중인 인물 (확인된 관계 중에서만)
+        self.focus_age = 0                     # 진행 중인 인물을 말하지 않고 지난 사용자 턴 수
+        self.topic_age = 0                     # 화제 없는 이어지는 말로 직전 화제를 유지한 사용자 턴 수
+        # 직전에 실제로 출력된 일상 대화 로봇 문장의 질문 유형: {"type": "yesno"|"open", "topic", "turn"} 또는 None
+        self.last_question: Optional[dict] = None
+        self.q_streak = 0                      # 일상 대화에서 질문으로 끝난 로봇 응답이 이어진 수 (제외 대상이 나오면 0)
+        self.last_out_kind: Optional[str] = None   # 직전에 실제로 출력된 로봇 응답의 종류
         # 확인 대기: {"kind": "yesno"|"open", "relation": 관계 또는 None} — 일상 대화에서만, 안전 확인이 시작되면 지운다
         self.pending_confirm: Optional[dict] = None
         self.resume_topic: Optional[str] = None  # STT 재질문 직전의 화제: 다시 알아들으면 이 화제로 돌아간다

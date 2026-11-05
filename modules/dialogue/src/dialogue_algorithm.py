@@ -27,7 +27,7 @@ from dialogue_types import (SPEECH_EVENTS, Config, DialogueInput, DialogueOutput
 from situation import Situation, assess
 from llm_client import client_from_env                                       # noqa: E402
 from llm_chat import (EMOTION_KO, STT_REASK_ALLOWED, LLMRunner, build_prompt,  # noqa: E402
-                      check_text as check_llm_text, clean as clean_llm_text, fix_honorifics,
+                      check_text as check_llm_text, clean as clean_llm_text, fix_honorifics, fix_name_honorific,
                       grounding_issue, intent_for as llm_intent_for, is_unclear_mark, is_user_question,
                       semantic_issue, trim as trim_llm_text)
 from text_analyzer import FIRE_KINDS, TextSignals, analyze, relations_in
@@ -1083,11 +1083,14 @@ class DialogueEngine:
             cand = None
             if why is None:
                 prev_q = bool(last) and last[0].strip().endswith("?")      # 실제로 출력된 직전 로봇 문장만
-                cand = trim_llm_text(fix_honorifics(raw), prev_q, keep_question=req.reask)
+                users = [t.text for t in self.ctx.history if t.role == "user"]
+                cand = trim_llm_text(fix_name_honorific(fix_honorifics(raw), users), prev_q, keep_question=req.reask)
                 # 실제로 말할 문장에 어르신이 말하지 않은 관계·상황이 있으면 쓰지 않는다 (잘려 나간 문장은 말하지 않으므로 제외)
                 why = grounding_issue(cand, req.grounded, req.kind) or check_llm_text(
                     cand, last[0] if last else None, self.cfg.llm_max_chars, self.cfg.llm_min_hangul, req.reask)
             text, src, ms = (cand, "llm", req.ms) if why is None else (req.fallback, "template", req.ms)
+            if why == "guess" and req.kind == "generic":      # 짐작 탈락: "그러시군요" 대신 중립 문장
+                text = self.gen._pick(R.GUESS_FALLBACK, self.ctx.recent_ai())
         base = req.out
         self.state = base.state                               # 미뤄 둔 상태 전환을 출력과 함께 적용
         note = " (LLM 문장)" if src == "llm" else f" (LLM 대신 템플릿: {why})"

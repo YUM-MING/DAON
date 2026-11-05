@@ -12,9 +12,12 @@
      테마 스위처 자체가 제거되었습니다) */
   body{ background:#000; }
 
+  /* 상단 상태 배지(상태/감정/눈/상황)는 사용자 화면에서 숨김.
+     user-face.js · ws-client.js 가 요소를 참조하므로 DOM 은 유지하고 화면에서만 제거한다. */
   .top-badges{
+    display:none !important;
     position:fixed; top:14px; left:14px; z-index:50;
-    display:flex; gap:8px; flex-wrap:wrap; max-width:70vw;
+    flex-wrap:wrap; gap:8px; max-width:70vw;
   }
   .top-badges .badge{ background:rgba(255,255,255,.08); color:#cfd8e6; font-size:11px; }
 

@@ -121,6 +121,19 @@
     <div class="grid-2">
       <div class="card">
         <h3>주간 감정 통계</h3>
+        <div class="muted" style="font-size:12px; line-height:1.6; margin-bottom:10px;">
+          <b>집계 기준</b><br>
+          · 최근 7일간, 카메라로 인식한 어르신의 표정이 <b>이전과 다른 감정으로 바뀔 때마다 1회</b> 집계됩니다.<br>
+          · 같은 표정이 계속 유지되는 동안은 횟수가 늘지 않습니다. (프레임·초 단위가 아님)<br>
+          · 요일별 막대는 그날 집계된 감정 비율, "총 N회"는 감정이 바뀐 횟수입니다.
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px 14px; font-size:12px; margin-bottom:12px;">
+          <span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#ffd35b;vertical-align:-2px;"></i> 기쁨</span>
+          <span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#8fa6ff;vertical-align:-2px;"></i> 중립</span>
+          <span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#6b8cff;vertical-align:-2px;"></i> 슬픔</span>
+          <span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#ff8a6b;vertical-align:-2px;"></i> 화남</span>
+          <span><i style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#b98cff;vertical-align:-2px;"></i> 놀람</span>
+        </div>
         <div id="emotionWeekChart"></div>
       </div>
       <div class="card">

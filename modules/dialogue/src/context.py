@@ -47,6 +47,15 @@ class ConversationContext:
         self.last_question: Optional[dict] = None
         self.q_streak = 0                      # 일상 대화에서 질문으로 끝난 로봇 응답이 이어진 수 (제외 대상이 나오면 0)
         self.last_out_kind: Optional[str] = None   # 직전에 실제로 출력된 로봇 응답의 종류
+        # 감정별 대화 (응답 문장에만 쓴다. negative_streak·보호자 알림 집계와는 별개)
+        self.emo_kind: Optional[str] = None    # 지금 이어지는 감정 종류 (어르신이 직접 말한 감정만)
+        self.emo_turns = 0                     # 같은 감정이 이어진 사용자 턴 수 (단계 선택용)
+        self.listen_left = 0                   # 경청 모드: 남은 사용자 턴 수 (그동안 환기하지 않음)
+        self.listen_kind: Optional[str] = None # 경청 모드를 시작한 감정 (감정이 바뀌면 경청 모드 해제)
+        # 긍정 요소: 어르신이 좋았다·기대된다고 직접 말한 일만 {"relation", "topic", "evidence", "turn"} (원문 없음, 세션 안에서만)
+        self.positive_notes: list = []
+        self.used_notes: set = set()           # 이미 환기에 쓴 요소 (세션당 같은 요소 1회)
+        self.redirect_offer: Optional[dict] = None   # 방금 낸 환기 제안 (다음 발화 한 번에만 수락·거절로 해석)
         # 확인 대기: {"kind": "yesno"|"open", "relation": 관계 또는 None} — 일상 대화에서만, 안전 확인이 시작되면 지운다
         self.pending_confirm: Optional[dict] = None
         self.resume_topic: Optional[str] = None  # STT 재질문 직전의 화제: 다시 알아들으면 이 화제로 돌아간다

@@ -30,8 +30,8 @@ from llm_chat import (EMOTION_KO, STT_REASK_ALLOWED, LLMRunner, build_prompt,  #
                       check_text as check_llm_text, clean as clean_llm_text, fix_honorifics, fix_name_honorific,
                       grounding_issue, intent_for as llm_intent_for, is_unclear_mark, is_user_question,
                       question_type, semantic_issue, split_sentences, SYMPTOM_KINDS, trim as trim_llm_text,
-                      drop_last_question, repeats_question)
-from text_analyzer import FIRE_KINDS, TextSignals, analyze, relations_in
+                      drop_last_question, drop_questions, repeats_question)
+from text_analyzer import FIRE_KINDS, NEG_EMOTION_KINDS, TextSignals, analyze, relations_in
 
 __all__ = ["DialogueEngine", "DialogueInput", "DialogueOutput", "Config", "State", "Strategy"]
 
@@ -53,6 +53,11 @@ GUESS_NEUTRAL = "guess_neutral"   # 짐작 탈락 중립 문장의 응답 종류
 NEW_SCENE_WORDS = ("오늘", "어제", "아까", "방금", "내일", "이따", "요즘", "그저께", "지난주", "지난번", "주말")
 NEW_SCENE_PLACE_RE = re.compile(r"에\s?(?:갔|가서|다녀|들렀|왔었)|에서\s")
 SHORT_KINDS = ("short_yes", "short_no", "short_open", "short_just", "short_chain")
+LISTEN_TURNS = 3               # 경청 모드: 이 사용자 턴 수 동안(또는 감정 종류가 바뀔 때까지) 환기하지 않는다
+REDIRECT_AFTER = {"lonely": 2, "lethargic": 2, "anxious": 2, "sad": 3, "angry": 3}   # 환기 제안을 검토하는 같은 감정 턴 수
+# 환기 제안에 대한 짧은 수락·거절 낱말 (발화 전체가 이 낱말들로만 이루어졌을 때만 수락·거절로 본다)
+REDIRECT_YES = CONFIRM_YES | {"좋아", "좋아요", "좋지", "좋죠", "그러자", "그러죠", "그럽시다", "그래그래"}
+REDIRECT_NO = CONFIRM_NO | {"싫어", "싫어요", "됐어", "됐어요", "안할래", "안해"}
 EVERYDAY_STRATEGIES = {Strategy.SMALL_TALK, Strategy.EMPATHIZE, Strategy.FOLLOW_UP, Strategy.GENTLE_PROBE}
 # 반복·지속 통증을 밝히는 말: 부위를 물은 직후의 대답이라도 기존 재호소 판단을 따른다 ('또'는 낱말 단위로 따로 본다)
 PAIN_REPEAT_MARKS = ("아까도", "아까부터", "계속", "자꾸", "여전히", "아직도", "또다시", "다시아", "잖아", "다니까")
@@ -131,7 +136,10 @@ class ResponseGenerator:
         if c.get("slots"):                            # 빈칸을 먼저 채워야 최근 문장 비교(반복 피하기)가 맞다
             pool = [_fill(t, c["slots"]) for t in pool]
         budget = c.get("question_budget", 0)          # 일상 대화에서 직전까지 이어진 질문 응답 수 (제외 대상은 없음)
-        text = self._pick(pool, c.get("recent_ai", []), prefer_statement=budget >= 1)
+        text = self._pick(pool, c.get("recent_ai", []), prefer_statement=budget >= 1 or c.get("no_question", False))
+        if c.get("no_question") and "?" in text:
+            # 경청 모드: 위치와 관계없이 질문 문장을 모두 뺀다 (남는 말이 없으면 진술형 문장)
+            text = drop_questions(text) or self._pick(R.STATEMENT_FALLBACK, c.get("recent_ai", []))
         if budget >= QUESTION_STREAK_LIMIT and text.strip().endswith("?"):
             # 일상 대화에서 질문이 연속 두 번 나갔다: 이번에는 질문으로 끝내지 않는다 (끝 질문을 빼거나 진술형 문장)
             text = drop_last_question(text) or self._pick(R.STATEMENT_FALLBACK, c.get("recent_ai", []))
@@ -169,11 +177,18 @@ class ResponseGenerator:
             return R.SYMPTOM_TALK[c["kind"]]
         if c.get("kind") in R.STT_TALK:               # STT 오류 다시 묻기·부르기·마이크 확인·다시 말하기
             return R.STT_TALK[c["kind"]]
+        if c.get("kind") in R.REDIRECT_TALK:          # 환기 제안과 그 수락·거절
+            return R.REDIRECT_TALK[c["kind"]]
         if c.get("kind") in R.SHORT_TALK:             # 짧은 대답: 화제가 있으면 화제를 살린 문장
             pools = R.SHORT_TALK[c["kind"]]
             return pools.get(c.get("topic"), pools["default"])
         if c.get("person") and c.get("kind") in R.PERSON_TALK:   # 이어지는 말에서 이야기 중인 인물 (확인된 관계만)
             return R.PERSON_TALK[c["kind"]]
+        ek, stage = c.get("emo_kind"), c.get("emo_stage")       # 어르신이 직접 말한 감정의 단계 (없으면 기존 문장)
+        if strategy == Strategy.FOLLOW_UP and ek in R.FOLLOW_UP_BY_KIND:
+            return R.FOLLOW_UP_BY_KIND[ek]
+        if (strategy == Strategy.EMPATHIZE or c.get("kind") == "emotion") and stage in R.EMPATHY_BY_KIND.get(ek, {}):
+            return R.EMPATHY_BY_KIND[ek][stage]
         emo = c.get("emotion") if c.get("emotion") in R.EMPATHY_LIGHT else "default"
         topic = c.get("topic")
         if strategy == Strategy.GENTLE_PROBE:
@@ -259,6 +274,7 @@ class DialogueEngine:
         self._prev_pend = None                # 이번 발화 직전의 확인 대기 (LLM '알아들을 수 없음' 처리 때 연속 여부 판단)
         self._out_kind = None                 # 마지막으로 만든 응답의 종류 (출력된 질문 유형 기록용)
         self._continuing = False              # 이번 발화가 앞 이야기에 이어지는 말인지 (화제·인물 문맥 문장에만 사용)
+        self._listening = False               # 이번 턴이 경청 모드 안인지 (질문·환기 없이 공감·수용만)
         self._resume_hint = None              # 이번 발화가 STT 재질문 뒤의 발화면 직전 화제 (LLM 문맥용)
         self.ctx = ConversationContext(self.cfg)
         self.state = State.NORMAL
@@ -283,6 +299,7 @@ class DialogueEngine:
         now = inp.timestamp
         text = (inp.stt or "").strip()
         self._text = text
+        self._listening = False                               # 경청 모드 여부는 일상 대답 경로에서 이번 턴마다 정한다
         sig = analyze(text)                                   # ① 입력 분석
         self._resume_hint = None
         self._state_before = self.state                       # LLM 대기 중에는 상태 전환(NORMAL↔EMOTIONAL)을 출력 시점으로 미룬다
@@ -388,6 +405,7 @@ class DialogueEngine:
         pend, c.pending_confirm = c.pending_confirm, None  # 확인 대기는 바로 다음 발화 한 번에만 쓴다
         self._prev_pend = pend
         lq, c.last_question = c.last_question, None        # 직전 일상 질문도 바로 다음 발화 한 번에만 쓴다
+        offer, c.redirect_offer = c.redirect_offer, None   # 환기 제안도 바로 다음 발화 한 번에만 수락·거절로 본다
         if pend is not None and not sig.stt_unclear:
             answered = self._confirm_answer(pend, sig)
             if answered is not None:
@@ -446,7 +464,13 @@ class DialogueEngine:
         c.last_medicine = bool(sig.medicine or sig.medicine_state)
         negative = sit.valence == "negative"
         c.register_user_turn(negative, sig.topics)
-        if pend is None:                                  # 순서: 확인 대기 → 통증 대답(위) → 일반 질문에 대한 짧은 대답
+        self._update_emotion(sig, sit)                    # 감정 단계 (응답 문장용, 위 집계와 별개)
+        self._note_positive(sig)                          # 긍정 요소 기록·제외 (어르신이 직접 좋다·기대된다고 한 일만)
+        if pend is None and offer is not None:            # 순서: 확인 대기 → 통증 대답(위) → 환기 제안 대답 → 일반 질문 대답
+            answered = self._redirect_answer(sig, offer)
+            if answered is not None:
+                return answered
+        if pend is None:
             short = self._short_answer(sig, lq)
             if short is not None:
                 return short
@@ -487,6 +511,11 @@ class DialogueEngine:
             joy = sig.joy or happy_face             # 기쁨은 화제 응답보다 먼저 함께 기뻐한다
             kind = self._small_talk_kind(sig, sit, topic, joy, prev_topic)
             gen_ctx = {"kind": kind, **self._person_slots(kind)}   # 대체 문장(템플릿)에 문맥 인물 (확인된 관계만)
+            if kind == "emotion":
+                redirect = self._try_redirect(sig, State.NORMAL, Strategy.SMALL_TALK)
+                if redirect is not None:
+                    return redirect
+                gen_ctx.update(self._emo_ctx(sig))
             if kind == "time":
                 gen_ctx["time_text"] = korean_time(now)   # 입력 시각 기준 (테스트에서 시각 주입 가능)
             elif kind == "date":
@@ -518,16 +547,21 @@ class DialogueEngine:
         streak_followup = c.negative_streak - c.followup_at_streak >= self.cfg.streak_for_followup
         if streak_followup or repeated:
             why = f"같은 주제 반복({repeated})" if repeated else f"부정 발화 연속 {c.negative_streak}회"
-            out = self._speak(State.EMOTIONAL, Strategy.FOLLOW_UP, {"topic": repeated}, why)
+            out = self._speak(State.EMOTIONAL, Strategy.FOLLOW_UP, {"topic": repeated, **self._emo_ctx(sig)}, why)
             c.followup_at_streak = c.negative_streak      # 같은 되묻기 반복 방지
             if repeated:
                 c.topic_counts[repeated] = 0
+                self._start_listening()                   # 같은 고민의 반복: 경청을 원하는 것으로 보고 환기하지 않는다
+        elif (redirect := self._try_redirect(sig, State.EMOTIONAL, Strategy.EMPATHIZE)) is not None:
+            out = redirect                                # 공감 먼저 + 긍정 요소 이야기를 예/아니요로 제안 (전환 확정 아님)
         else:
             level = "deep" if sit.emotion_intensity >= 0.6 else "light"
+            emo = self._emo_ctx(sig)
             out = self._speak(State.EMOTIONAL, Strategy.EMPATHIZE,
-                              {"emotion": c.last["emotion"], "level": level, "topic": topic},
+                              {"emotion": c.last["emotion"], "level": level, "topic": topic, **emo},
                               f"부정 감정(강도 {sit.emotion_intensity:.2f}) → 공감 {level}"
-                              + (f", 주제 '{topic}' 반영" if topic in R.TOPIC_EMPATHY else ""))
+                              + (f", 주제 '{topic}' 반영" if topic in R.TOPIC_EMPATHY else "")
+                              + (f", 감정 {emo['emo_kind']} {emo['emo_stage']}단계" if emo else ""))
         out.notice = notice
         return out
 
@@ -550,7 +584,7 @@ class DialogueEngine:
         if (self.session is not None or out.state == State.SAFETY_CHECK or out.strategy not in EVERYDAY_STRATEGIES
                 or kind in SYMPTOM_KINDS or kind in R.STT_TALK or (kind or "").startswith("medicine")):
             return None
-        qtype = question_type(out.response_text)
+        qtype = "yesno" if kind == "redirect" else question_type(out.response_text)   # 환기 제안은 예/아니요 선택 질문
         if qtype is None:
             return None
         return {"type": qtype, "text": split_sentences(out.response_text)[-1], "topic": self.ctx.last_topic}
@@ -580,6 +614,127 @@ class DialogueEngine:
         kind = "short_yes" if w in CONFIRM_YES else "short_no"
         return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": kind, "question": lq["text"], "topic": topic},
                            f"예/아니요 질문 「{lq['text']}」에 '{w}' → 같은 이야기로 이어 가기")
+
+    # ───── 감정별 대화 (일상 대화에서만, 응답 문장에만 영향) ─────
+    def _update_emotion(self, sig: TextSignals, sit: Situation) -> None:
+        """같은 감정이 이어진 턴 수. 어르신이 감정을 직접 말한 턴만 센다. 감정이 불확실한 부정 발화나 짧은 대답은
+        이어지는 것으로 두고(세지 않음), 그 밖의 말이 오면 끝낸다. negative_streak·보호자 알림 집계와는 별개"""
+        c = self.ctx
+        was_listening = c.listen_left > 0                 # 이번 턴이 경청 모드 안인지 (시작한 다음 턴부터 LISTEN_TURNS턴)
+        if c.listen_left:
+            c.listen_left -= 1                            # 경청 모드는 사용자 턴마다 줄어든다
+        k = sig.emotion_kind if sig.emotion_kind in NEG_EMOTION_KINDS else ""
+        words = re.findall(r"[가-힣]+", self._text)
+        bare_short = len(words) == 1 and words[0] in CONFIRM_YES | CONFIRM_NO | SHORT_JUST
+        if k:
+            c.emo_turns = c.emo_turns + 1 if k == c.emo_kind else 1
+            if k != c.emo_kind and c.listen_kind not in (None, k):
+                c.listen_left, c.listen_kind = 0, None    # 감정 종류가 바뀌면 경청 모드 해제
+                was_listening = False
+            c.emo_kind = k
+        elif not (sit.valence == "negative" or sig.negative or bare_short or sig.listen_request):
+            c.emo_kind, c.emo_turns = None, 0
+        self._listening = was_listening
+        if sig.listen_request:                            # "그냥 들어줘": 사용자 3턴 동안(또는 감정이 바뀔 때까지) 환기하지 않음
+            self._start_listening()
+
+    def _start_listening(self) -> None:
+        c = self.ctx
+        c.listen_left, c.listen_kind = LISTEN_TURNS, c.emo_kind
+
+    def _emo_ctx(self, sig: TextSignals) -> dict:
+        """이번 응답에 쓸 감정·단계. 이번 발화에서 그 감정을 직접 말했을 때만 (그리움은 기존 그리움 문장).
+        경청 모드에서는 2단계(경청·동행)까지만"""
+        c = self.ctx
+        k = sig.emotion_kind
+        if k not in NEG_EMOTION_KINDS or k != c.emo_kind or sig.grief:
+            return {}
+        stage = min(c.emo_turns, 3)
+        if self._listening:
+            stage = min(stage, 2)
+        return {"emo_kind": k, "emo_stage": stage}
+
+    # ───── 긍정 요소와 환기 제안 (일상 대화에서만) ─────
+    def _note_positive(self, sig: TextSignals) -> None:
+        """어르신이 좋았다·기대된다고 직접 말한 일만 기록 (관계는 확인된 관계, 원문 없음). 단순 관계 언급·방문 소식만으로는
+        기록하지 않는다. 같은 관계·화제에 대해 부정적인 말이 나오면 그 요소를 뺀다"""
+        c = self.ctx
+        rels = relations_in(self._text) & c.confirmed_relations
+        if sig.negative or sig.emotion_kind in NEG_EMOTION_KINDS:
+            c.positive_notes = [n for n in c.positive_notes
+                                if not (n["relation"] in rels or (n["relation"] is None and n["topic"] in sig.topics))]
+            return
+        evidence = ("joy" if sig.joy else "good_day" if sig.past_positive else "positive" if sig.positive
+                    else "expect" if sig.expect else None)
+        if evidence is None or sig.distress != "none":
+            return
+        if not rels and self._continuing and c.focus_relation in c.confirmed_relations:
+            rels = {c.focus_relation}                     # "손녀가 놀러 온대 → 너무 기대돼": 이어지는 말의 인물
+        if rels:
+            note = {"relation": sorted(rels)[0], "topic": "family"}
+        elif sig.visit:
+            note = {"relation": None, "topic": "visit"}
+        elif sig.topics and sig.topics[0] in ("family", "weather"):
+            note = {"relation": None, "topic": sig.topics[0]}
+        else:
+            return                                        # 무엇이 좋았는지 근거가 없으면 기록하지 않는다
+        c.positive_notes = [n for n in c.positive_notes if (n["relation"], n["topic"]) != (note["relation"], note["topic"])]
+        c.positive_notes.append({**note, "evidence": evidence, "turn": c.user_turns})
+
+    def _try_redirect(self, sig: TextSignals, state, strategy) -> Optional[DialogueOutput]:
+        """환기 제안: 같은 감정이 이어지고(외로움·무기력·불안 2턴, 슬픔·분노 3턴), 경청 모드가 아니고, 그리움·마음 아픔이
+        아니고, 짧은 대답이 이어진 직후가 아니고, 질문 예산이 남았고, 아직 쓰지 않은 긍정 요소가 있을 때만.
+        공감을 먼저 말하고 예/아니요로 묻는다. 제안만으로 화제·인물을 바꾸지 않는다"""
+        c = self.ctx
+        k = sig.emotion_kind
+        if (k not in REDIRECT_AFTER or k != c.emo_kind or c.emo_turns < REDIRECT_AFTER[k] or self._listening
+                or sig.emotion_no_redirect or sig.grief or sig.distress != "none" or sig.self_harm
+                or c.last_out_kind == "short_chain" or c.q_streak >= QUESTION_STREAK_LIMIT):
+            return None
+        note = next((n for n in reversed(c.positive_notes) if self._note_key(n) not in c.used_notes), None)
+        if note is None:
+            return None                                   # 긍정 요소가 없으면 공감·경청을 이어 간다
+        c.used_notes.add(self._note_key(note))
+        out = self._speak(state, strategy, {"kind": "redirect", "slots": {"ack": R.REDIRECT_ACK[k],
+                                                                         "anchor": self._anchor_text(note)}},
+                          f"감정 {k} {c.emo_turns}턴, 경청 모드 아님, 긍정 요소({note['relation'] or note['topic']}) "
+                          "→ 공감 후 그 이야기를 예/아니요로 제안 (화제 전환 확정 아님)")
+        c.redirect_offer = note
+        return out
+
+    @staticmethod
+    def _note_key(note: dict) -> tuple:
+        return note["relation"], note["topic"]
+
+    @staticmethod
+    def _anchor_text(note: dict) -> str:
+        if note["relation"]:
+            return f"{R.RELATION_HONOR[note['relation']]} 이야기"
+        return R.REDIRECT_TOPIC[note["topic"]]
+
+    def _redirect_answer(self, sig: TextSignals, offer: dict) -> Optional[DialogueOutput]:
+        """환기 제안 바로 다음 발화. '응'이면 그 화제로 이어 가고(이때 화제·인물 갱신), '아니'·경청 요청이면 경청 모드로
+        돌아가 원래 감정에 공감한다. 그 화제를 직접 이야기하면 평소 흐름(언급으로 갱신). 그 밖의 말은 제안을 버리고 평소대로.
+        감정이 나아졌다고 판단하거나 기록하지 않는다"""
+        c = self.ctx
+        words = re.findall(r"[가-힣]+", self._text)
+        if sig.distress != "none" or sig.self_harm:
+            return None
+        # 발화 전체가 짧은 수락·거절 낱말로만 이루어졌을 때만 ("그래도 외로워", "좋아졌어"는 수락이 아니다)
+        accept = 0 < len(words) <= 3 and all(w in REDIRECT_YES for w in words)
+        reject = 0 < len(words) <= 3 and all(w in REDIRECT_NO for w in words)
+        if accept:
+            c.last_topic, c.topic_age = ("family" if offer["relation"] or offer["topic"] == "visit" else offer["topic"]), 0
+            if offer["relation"]:
+                c.focus_relation, c.focus_age = offer["relation"], 0
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK,
+                               {"kind": "redirect_yes", "slots": {"anchor": self._anchor_text(offer)}},
+                               f"환기 제안 수락 → {self._anchor_text(offer)}로 이어 가기")
+        if reject or sig.listen_request:
+            self._start_listening()
+            return self._speak(State.EMOTIONAL, Strategy.SMALL_TALK, {"kind": "redirect_no"},
+                               "환기 제안 거절 → 경청 모드, 원래 마음 이야기를 듣기 (화제·인물 그대로)")
+        return None
 
     # ───── 화제·인물 유지 (일상 대화에서만) ─────
     def _own_subject(self, sig: TextSignals, sit: Optional[Situation]) -> bool:
@@ -913,7 +1068,9 @@ class DialogueEngine:
                                  "abilities": "abilities"}[sig.question]
         if joy:                                       # 기쁨 표현·밝은 표정: 화제보다 먼저 기쁨을 받아준다
             return {"family": "joy_family", "health": "joy_health"}.get(topic, "joy")
+        if sig.listen_request: return "listen"             # "그냥 들어줘": 화제를 돌리거나 묻지 않고 들을 준비
         if sig.boredom: return "boredom"
+        if sig.emotion_kind in NEG_EMOTION_KINDS: return "emotion"   # 무기력·서운함 등: 부정 정서 판정은 아니지만 감정을 말함
         if sig.medicine_state:                              # 누락·거부·복용 판단 질문은 완료 칭찬으로 보내지 않는다
             return "medicine_" + sig.medicine_state
         if sig.medicine: return "medicine"                  # 약 복용은 식사 응답보다 먼저 (식사로 되묻지 않음)
@@ -1213,13 +1370,15 @@ class DialogueEngine:
         system, messages = build_prompt(intent, turns, symptoms, c.last_topic, c.prev_topic, emotion,
                                         self._resume_hint, recent_ai=c.recent_ai(3),
                                         user_question=is_user_question(user_text),
-                                        known_relations=c.confirmed_relations, focus=c.focus_relation)
+                                        known_relations=c.confirmed_relations, focus=c.focus_relation,
+                                        listening=self._listening)
         kind = self._last_gen[2].get("kind")
         reask = kind in STT_REASK_ALLOWED
         req = self._llm.submit(out, out.response_text, system, messages, reask)
         req.kind, req.grounded = kind, set(c.confirmed_relations)   # 근거 검사는 요청 시점의 확인된 관계로
         # 질문 예산: 제외 대상(STT 재질문 등)이면 None → 질문을 건드리지 않는다
         req.budget = None if reask or self._budget_exempt(out.state, self._last_gen[1], kind) else c.q_streak
+        req.listening = req.budget is not None and self._listening   # 경청 모드: 응답에 질문을 남기지 않는다
         # 응답을 내기 전까지는 이전 상태를 유지한다: 대기 중 출력이 상태 변화로 보이면 서버가 'thinking' 표시를 끝내므로
         req.state_before = self.state = self._state_before
         return DialogueOutput(self.state, Strategy.NONE, None, reason=f"LLM 응답 준비 중 (요청 #{req.rid}): {out.reason}",
@@ -1244,6 +1403,11 @@ class DialogueEngine:
                 # 실제로 말할 문장에 어르신이 말하지 않은 관계·상황이 있으면 쓰지 않는다 (잘려 나간 문장은 말하지 않으므로 제외)
                 why = grounding_issue(cand, req.grounded, req.kind) or check_llm_text(
                     cand, last[0] if last else None, self.cfg.llm_max_chars, self.cfg.llm_min_hangul, req.reask)
+            if why is None and req.listening and "?" in cand:
+                # 경청 모드: 앞·중간·끝 어디에 있든 질문 문장을 모두 뺀다. 질문만 있었으면 고정 평서문(템플릿)으로
+                cand = drop_questions(cand)
+                if cand is None:
+                    why = "listening"
             if why is None and req.budget is not None and cand.endswith("?"):
                 # 질문 예산이 찼거나(연속 두 번) 최근에 한 질문을 되풀이하면 끝 질문을 뺀다. 남는 말이 없으면 진술형 템플릿
                 over = req.budget >= QUESTION_STREAK_LIMIT
@@ -1255,6 +1419,8 @@ class DialogueEngine:
             text, src, ms = (cand, "llm", req.ms) if why is None else (req.fallback, "template", req.ms)
             if why in ("question_budget", "repeat_question") and req.fallback.strip().endswith("?"):
                 text = drop_last_question(req.fallback) or self.gen._pick(R.STATEMENT_FALLBACK, self.ctx.recent_ai())
+            if req.listening and "?" in (text or ""):          # 경청 모드의 대체 문장도 질문 없이
+                text = drop_questions(text) or self.gen._pick(R.STATEMENT_FALLBACK, self.ctx.recent_ai())
             if why == "guess" and req.kind == "generic":      # 짐작 탈락: "그러시군요" 대신 중립 문장
                 text = self.gen._pick(R.GUESS_FALLBACK, self.ctx.recent_ai())
         base = req.out
@@ -1306,6 +1472,8 @@ class DialogueEngine:
         gen_ctx = {**gen_ctx, "history": self.ctx.recent_texts(), "recent_ai": self.ctx.recent_ai()}
         if not self._budget_exempt(state, strategy, gen_ctx.get("kind")):
             gen_ctx["question_budget"] = self.ctx.q_streak      # 일상 대화의 질문 예산 (안전·STT·확인·증상·복약 제외)
+            if self._listening:
+                gen_ctx["no_question"] = True                   # 경청 모드: 질문 없이 공감·수용만
         out = DialogueOutput(state, strategy, self.gen.generate(strategy, gen_ctx), reason=reason)
         self._last_gen = (out, strategy, gen_ctx)
         self._out_kind = gen_ctx.get("kind")

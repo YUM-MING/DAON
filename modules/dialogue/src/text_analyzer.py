@@ -183,6 +183,21 @@ POSITIVE = ("좋아", "좋네", "행복", "기뻐", "즐거", "신나", "재밌"
 JOY = ("기뻐", "기쁘", "기쁜", "행복", "신나", "신난", "즐거", "기분좋", "기분이좋")
 # 부정 표현 앞뒤의 부정어: "안 외로워", "외롭지 않아" → 부정 감정 아님
 NEG_AFTER = ("지않", "지는않", "진않", "지도않", "지가않", "하지않", "하지는않", "하진않")
+# --- 감정 종류 (응답 전략용 보조 정보: negative·valence·intensity·연속 부정 집계와 무관) ---
+# 텍스트에 그 감정을 직접 말한 근거가 있을 때만. 범용 낱말("힘들·답답·우울·별로")만 있거나 근거가 섞이면 정하지 않는다
+EMOTION_WORDS = {
+    "lonely": ("외로", "외롭", "쓸쓸", "허전", "아무도없", "사람이없", "의지할데", "의지할사람"),
+    "sad": ("슬퍼", "슬프", "슬픈", "서러", "서럽", "속상", "서운", "섭섭", "울적"),
+    "anxious": ("불안", "무서", "무섭", "걱정돼", "걱정되", "걱정이", "겁나", "두려"),
+    "angry": ("화나", "화가나", "화났", "짜증", "열받", "열이받", "약올라", "억울"),
+    # 무기력: 명시 표현만 ("그냥"이 붙으면 단정하지 않음). '힘이 없어'(위험 의심)·'귀찮아'(복약 거부)는 넣지 않는다
+    "lethargic": ("의욕이없", "의욕없", "만사가귀찮", "만사귀찮", "다귀찮", "아무것도하기싫", "아무것도하고싶지않"),
+}
+NEG_EMOTION_KINDS = tuple(EMOTION_WORDS)
+EXPECT_WORDS = ("기대돼", "기대가돼", "기대된다", "기대되", "기다려져", "기다려진다", "설레", "설렌다")   # 기대된다는 긍정 표현
+# 경청을 원하는 말 ("그냥 들어줘", "얘기하고 싶어", "말하고 싶어", "그냥 얘기할래")
+LISTEN_REQUEST = ("들어줘", "들어줄래", "들어주라", "그냥들어", "얘기하고싶", "이야기하고싶", "말하고싶", "얘기할래", "이야기할래",
+                  "말할래")
 
 # --- 일상 화제 ---
 GREETING = ("안녕", "좋은아침", "굿모닝", "잘잤어")
@@ -353,6 +368,10 @@ class TextSignals:
     worsening: bool = False         # 지금 상태가 이전보다 나빠졌다는 말 ("지금은 더 심해"). 최근 증상 기록이 있을 때만 확인
     moan: bool = False              # 신음 감탄사만으로 된 발화 ("윽", "끙끙") → 안전 확인 (즉시 비상 아님)
     improving: bool = False         # 지금 나아지고 있다는 말 ("덜 아파", "나아졌어") — 통증 재호소·악화로 보지 않음
+    emotion_kind: str = ""          # lonely|sad|anxious|angry|lethargic|positive|"" (불확실) — 응답 전략용, 판정·집계와 무관
+    emotion_no_redirect: bool = False   # 그리움·사별·마음 아픔: 공감·경청만 (환기 제안 대상 아님)
+    expect: bool = False            # "기대돼", "설레" (긍정 요소 기록용, positive 판정은 바꾸지 않음)
+    listen_request: bool = False    # "그냥 들어줘", "얘기하고 싶어": 경청을 원하는 말
     visit: bool = False             # 누가 놀러 온다·왔다는 소식 ("우리 선녀가 놀러 오기로 했어") — 누구인지는 짐작하지 않는다
     permission_ask: bool = False    # 행동을 해도 되는지 묻는 말 ("걸러도 괜찮지 않을까?") — 위험 호소도, 괜찮다는 대답도 아님
     skip_ask: bool = False          # 거르기·건너뛰기를 해도 되는지 묻는 말 ('약'이 없어도. 직전이 약 이야기면 복약 질문)
@@ -883,7 +902,30 @@ def analyze(text: str) -> TextSignals:
         asks_listener=any(ASKS_LISTENER.search(t) for t in tokens),
         scream=scream, worsening=worsening, moan=moan, improving=_improving(text) and not worsening,
         permission_ask=bool(permit_spans), skip_ask=_skip_ask(compact, bool(permit_spans)),
-        visit=bool(VISIT_RE.search(compact)))
+        visit=bool(VISIT_RE.search(compact)),
+        emotion_kind=("" if _medicine_state(compact, bool(permit_spans))      # 복약 이야기가 먼저 (복약 거부 "귀찮아" 등)
+                      else _emotion_kind(compact, distress, self_harm, negative, positive, heartache)),
+        emotion_no_redirect=heartache or (any(k in compact for k in MISSING) and any(k in compact for k in DECEASED)),
+        expect=_contains(compact, EXPECT_WORDS) and not negative,
+        listen_request=any(k in compact for k in LISTEN_REQUEST))
+
+
+def _emotion_kind(compact: str, distress: str, self_harm: bool, negative: bool, positive: bool,
+                  heartache: bool) -> str:
+    """감정 종류 (응답 전략용). 위험 발화·극단적 표현이 있으면 정하지 않는다 (안전 판정이 먼저).
+    근거가 두 종류 이상이거나, 부정과 긍정이 섞이면 불확실("")"""
+    if distress != "none" or self_harm:
+        return ""
+    found = {k for k, words in EMOTION_WORDS.items() if _contains(compact, words)}
+    if heartache:
+        found.add("sad")                           # "마음이 아파": 슬픔으로 공감 (환기 대상은 아님)
+    if "lethargic" in found and "그냥" in compact:
+        found.discard("lethargic")                 # "그냥 아무것도 하기 싫어": 무기력으로 단정하지 않는다
+    if len(found) == 1 and not positive:
+        return found.pop()
+    if not found and positive and not negative:
+        return "positive"
+    return ""
 
 
 def robot_speech_flags(text: str) -> tuple:

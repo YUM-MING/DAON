@@ -21,12 +21,14 @@ SMALL_TALK_ALLOWED = {
     "greeting", "thanks", "goodnight", "meal", "meal_done", "meal_not", "meal_ask", "boredom", "positive",
     "joy", "joy_family", "joy_health", "weather", "family", "health", "good_day", "tired", "sleep_bad", "sleep",
     "continue", "continue_family", "generic", "resume_topic", "meal_memory", "visit", "short_yes", "short_no",
+    "emotion",
 }
 SMALL_TALK_FORBIDDEN = {
     "about_ai", "time", "weather_ask", "abilities", "recall", "back_off", "relieved", "improving", "medicine",
     "health_ack", "wait", "medicine_missed", "medicine_ask", "medicine_refuse", "date", "date_unknown",
     "medicine_check", "medicine_check_pain", "medicine_check_pain_nopart",
     "short_open", "short_just", "short_chain",       # 질문 없는 고정 문장이어야 하는 짧은 대답 응답
+    "listen",                                        # 경청 요청: 화제 전환·질문 없는 고정 문장
 }
 STT_REASK_ALLOWED = {"stt_retry", "stt_mic"}            # 안전 확인 밖의 일반 재질문만 (재질문 표지가 있어야 통과)
 OTHER_STRATEGIES_ALLOWED = {Strategy.EMPATHIZE, Strategy.FOLLOW_UP, Strategy.GENTLE_PROBE}
@@ -59,6 +61,7 @@ KIND_INTENT = {
     "visit": "누가 놀러 온다는 소식에 반가움을 함께 나누기 (누구인지·어떤 관계인지 짐작해 붙이지 않기)",
     "short_yes": "직전 질문에 어르신이 '응'이라고 답하심: 그 대답을 받아 같은 이야기를 자연스럽게 이어 가기 (새 사실을 지어내지 않기)",
     "short_no": "직전 질문에 어르신이 '아니'라고 답하심: 그대로 받아들이고 캐묻지 않기 (새 사실을 지어내지 않기)",
+    "emotion": "어르신이 말씀하신 마음에 공감하기",
     "meal_memory": "추억을 들어주고 공감하며 그 음식에 대해 묻기 (방금 식사하신 것이 아님. 질문은 필요할 때만, 마음을 함께 나누는 것이 먼저)",
     "resume_topic": "잘 못 알아들어 다시 여쭌 뒤 다시 말씀하심: 직전 화제를 기억해서 자연스럽게 이어 가기",
     "stt_retry": "말씀을 알아듣지 못함: 내용을 추측해 답하지 말고, 다시 한 번 말씀해 달라고 자연스럽게 부탁하기",
@@ -68,6 +71,19 @@ STRATEGY_INTENT = {
     Strategy.EMPATHIZE: "감정에 공감하기",
     Strategy.FOLLOW_UP: "같은 고민이 이어져 걱정된다고 말하기 (후속 질문은 필요할 때만 하나)",
     Strategy.GENTLE_PROBE: "표정이 어두운데 괜찮다고 하심: 캐묻지 말고 조심스럽게 마음을 살피기 (질문은 필요할 때만 하나)",
+}
+# 감정·단계별 짧은 지시 (EMPATHIZE·FOLLOW_UP·emotion 의도 뒤에 붙인다). 감정은 어르신이 직접 말했을 때만 정해진다
+EMO_INTENT = {
+    "lonely": {1: "외로움: 마음을 받아 주기", 2: "외로움: 곁에 있다는 마음을 전하며 경청하기",
+               3: "외로움: 공감하며 가까운 관계나 일상 이야기로 부드럽게 이어 가기 (새 인물·사건을 지어내지 않기)"},
+    "sad": {1: "슬픔: 감정을 그대로 받아 주기 (위로를 서두르지 않기)", 2: "슬픔: 판단 없이 경청하기",
+            3: "슬픔: 부담 없는 위로 건네기"},
+    "anxious": {1: "불안: 그런 마음이 들 수 있다고 인정하기", 2: "불안: 무엇이 마음에 걸리는지 부드럽게 확인하기",
+                3: "불안: 안정을 돕는 말 건네기 (해결책을 단정하지 않기)"},
+    "angry": {1: "화: 감정을 받아 주기 (따지거나 판단하지 않기)", 2: "화: 무슨 일이 있었는지 경청하기",
+              3: "화: 마음이 가라앉도록 차분하게 돕기"},
+    "lethargic": {1: "의욕이 없다고 하심: 공감하고 다그치지 않기", 2: "무기력: 곁에 있다는 마음을 전하기",
+                  3: "무기력: 부담 없는 아주 작은 활동을 제안하기 (강요하지 않기)"},
 }
 TOPIC_KO = {"lonely": "외로움", "family": "가족", "health": "건강", "sleep": "잠", "weather": "날씨", "grief": "그리운 분"}
 EMOTION_KO = {"sad": "슬퍼 보임", "angry": "언짢아 보임", "fear": "불안해 보임", "happy": "밝아 보임"}
@@ -108,18 +124,24 @@ SYSTEM_PROMPT = (
 )
 QUESTION_PAUSE_HINT = ("직전 응답에서 이미 질문했습니다. 이번에는 새로운 질문을 하지 말고, 어르신의 말씀을 받아들이는 "
                        "공감·맞장구·짧은 감상으로 자연스럽게 답하세요.")
-USER_QUESTION_HINT = "어르신이 질문하셨습니다. 그 질문에 먼저 정확히 답하세요 (모르는 사실은 지어내지 말고 모른다고 말하기)."
+LISTENING_HINT = ("어르신이 이야기를 들어 주기를 원하십니다. 질문하지 말고 공감·수용하는 말 1~2문장으로만 답하세요. "
+                  "다른 화제를 제안하지 마세요.")
+USER_QUESTION_HINT ="어르신이 질문하셨습니다. 그 질문에 먼저 정확히 답하세요 (모르는 사실은 지어내지 말고 모른다고 말하기)."
 USER_QUESTION_RE = re.compile(r"(\?|니|냐|나요|까요|까|어때|뭐야|뭐지|어디야|언제야|누구야|했지|했더라|지요|죠)\s*$")
 # LLM이 자주 쓰는 어색한 가족 호칭 → 자연스러운 존칭 (확인된 표현만, 다른 문장은 바꾸지 않는다)
-HONORIFIC_FIX = (("딸님", "따님"), ("아들님", "아드님"))
+HONORIFIC_FIX = (("딸님", "따님"), ("아들님", "아드님"), ("딸분", "따님"))
+# 로봇이 어르신의 딸을 "딸아이"라고 부르면 "따님"으로 (받침이 생기므로 조사도 맞춘다). 로봇 문장(LLM 출력)에만 적용
+DAUGHTER_CHILD_RE = re.compile(r"딸아이(이랑|가|는|를|와|랑)?")
+DAUGHTER_CHILD_JOSA = {"가": "이", "는": "은", "를": "을", "와": "과", "랑": "이랑", "이랑": "이랑"}
 
 
 def fix_honorifics(text: Optional[str]) -> Optional[str]:
+    """LLM이 쓴 어색한 가족 호칭만 고친다 (어르신 원문·인용·관계 판정 낱말에는 쓰지 않는다)"""
     if text is None:
         return None
     for bad, good in HONORIFIC_FIX:
         text = text.replace(bad, good)
-    return text
+    return DAUGHTER_CHILD_RE.sub(lambda m: "따님" + DAUGHTER_CHILD_JOSA.get(m.group(1) or "", m.group(1) or ""), text)
 
 
 # "철수 분이" → "철수 씨가": 어르신이 말한 이름 뒤의 '분'만 고친다 ("두 분", "그분", "분위기"는 그대로). 이름 사전 없음:
@@ -161,18 +183,24 @@ def intent_for(strategy: Strategy, gen_ctx: dict) -> Optional[str]:
             intent = KIND_INTENT.get(kind)
             if intent and gen_ctx.get("question"):        # 짧은 대답: 어떤 질문에 대한 대답인지 함께 준다
                 intent += f" (직전 질문: 「{gen_ctx['question']}」)"
-            return intent
+            return _with_emotion(intent, gen_ctx)
         return None
     if strategy in OTHER_STRATEGIES_ALLOWED:
-        if kind in SYMPTOM_KINDS:
+        if kind in SYMPTOM_KINDS or kind in ("redirect", "redirect_no"):   # 환기 제안·거절 응답은 사실만 쓰는 고정 문장
             return None
-        return STRATEGY_INTENT[strategy]
+        return _with_emotion(STRATEGY_INTENT[strategy], gen_ctx)
     return None
+
+
+def _with_emotion(intent: Optional[str], gen_ctx: dict) -> Optional[str]:
+    """감정·단계 지시를 짧게 붙인다 (어르신이 직접 말한 감정이 있을 때만)"""
+    hint = EMO_INTENT.get(gen_ctx.get("emo_kind"), {}).get(gen_ctx.get("emo_stage"))
+    return f"{intent} ({hint})" if intent and hint else intent
 
 
 def build_prompt(intent: str, turns: list, symptoms: list, topic: Optional[str], prev_topic: Optional[str],
                  emotion: Optional[str], resume_topic: Optional[str], recent_ai=(), user_question: bool = False,
-                 known_relations=None, focus: Optional[str] = None) -> tuple:
+                 known_relations=None, focus: Optional[str] = None, listening: bool = False) -> tuple:
     """(system, messages). turns: [(role, text)] 최근 것까지 (role: user|ai). 식별 정보는 넣지 않는다.
     recent_ai: 실제로 출력된 최근 로봇 문장(오래된 것부터, 최대 3개). 마지막 문장이 질문이면 이번에는 질문하지 않도록 힌트"""
     info = [f"- 이번 응답의 의도: {intent}"]
@@ -193,6 +221,8 @@ def build_prompt(intent: str, turns: list, symptoms: list, topic: Optional[str],
         info.append("- 이번 대화에서 말씀하신 불편: " + ", ".join(symptoms) + " (진단·조언하지 말 것)")
     if emotion:
         info.append(f"- 표정 참고(확실하지 않음): {emotion}")
+    if listening:
+        info.append(f"- {LISTENING_HINT}")
     if focus or topic:
         info.append(f"- 지금 이야기 중인 사람·화제: {focus or '없음'} · {TOPIC_KO.get(topic, topic) or '없음'} "
                     "(짧거나 이어지는 말이면 이 문맥으로 답한다)")
@@ -322,6 +352,13 @@ def question_type(text: Optional[str]) -> Optional[str]:
     return "yesno" if YESNO_END_RE.search(last) else None
 
 
+def drop_questions(text: Optional[str]) -> Optional[str]:
+    """질문 문장을 위치와 관계없이 모두 뺀 진술 부분 (경청 응답 전용). 남는 진술이 없으면 None.
+    다른 경로는 기존 drop_last_question(끝 질문만)을 그대로 쓴다"""
+    sents = [s for s in split_sentences(text or "") if not s.endswith("?")]
+    return " ".join(sents) if sents else None
+
+
 def drop_last_question(text: Optional[str]) -> Optional[str]:
     """끝의 질문 문장들을 뺀 진술 부분. 남는 진술 문장이 없으면 None (빈 응답을 만들지 않는다)"""
     sents = split_sentences(text or "")
@@ -398,6 +435,7 @@ class LLMRequest:
         self.kind: Optional[str] = None          # 원래 응답 종류 (근거 검사 범위)
         self.grounded: set = set()               # 요청 시점의 확인된 관계 (근거 검사 기준)
         self.budget: Optional[int] = None        # 요청 시점의 연속 질문 수 (None: 질문 예산 제외 대상)
+        self.listening = False                   # 요청 시점에 경청 모드였는지 (응답의 질문 문장을 모두 뺀다)
 
 
 class LLMRunner:

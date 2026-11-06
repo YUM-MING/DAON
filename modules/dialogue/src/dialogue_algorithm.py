@@ -14,9 +14,13 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import difflib
+import hashlib
 import itertools
+import math
 import re
 import time
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -41,6 +45,17 @@ CAUSE_RANK = {"no_response": 1, "danger": 2, "crisis": 3}     # 비상 중 더 �
 CAUSE_NOTE = {"danger": "위험 발화", "crisis": "극단적 선택 암시"}
 NO_TEXT = TextSignals()        # 센서 근거만 다시 평가할 때 쓰는 빈 발화 신호
 MAX_GENTLE_PROBES = 2          # 조심스러운 되묻기 연속 허용 횟수 (그다음부터는 물러서는 말)
+# ───── 입력 방어막 (일상 대화의 텍스트 단독 입력에만. 안전 확인 중·구조 요청·센서 동반 턴·첫 턴은 적용하지 않음) ─────
+# 동일 문장 재전송 제거 목적. 엔진은 입력을 한 스레드에서 순서대로 처리하고 안전 판정은 process() 안에서 동기로 끝나므로,
+# 첫 번째 입력의 안전 판정이 끝난 뒤에만 두 번째가 비교된다 (무시해도 안전 판정 손실이 없다).
+DUP_WINDOW_SEC = 1.5           # 같은 정규화 문장이 이 시간(입력 시각 차) 안에 다시 오면 무시. 증명된 기준이 아닌 초기 실험값
+# 자기 목소리(로봇 TTS) 유입 방어: 기본 비활성. dialogue는 로봇 응답이 실제로 재생·완료됐는지 모르고(서버가 취소하거나
+# 재생하지 않았을 수 있음), 유사도만으로는 실제 사용자 발화와 구분할 수 없다 → 실제 로봇 테스트에서 유입이 확인된 뒤에만 켠다
+ECHO_GUARD_ENABLED = False
+ECHO_WINDOW_SEC = 10.0         # 직전 로봇 응답이 나간 뒤 이 시간 안의 입력만 검사
+ECHO_SIM = 0.9                 # 직전 로봇 응답과의 유사도(difflib SequenceMatcher ratio) 하한
+ECHO_MIN_LEN = 10              # 정규화 길이가 이보다 짧으면 검사하지 않음 (짧은 대답 보호)
+GUARD_LOG_MAX = 20             # 입력 방어 기록 보관 개수 (원문 없이 이유·간격·길이·해시만)
 # 확인 질문에 대한 짧은 대답 (낱말 전체가 이것뿐일 때만. "아니 그게 아니라 딸이 와"는 정정 발화)
 CONFIRM_YES = {"응", "네", "예", "그래", "맞아", "맞아요", "맞다", "그렇지", "그럼", "어", "엉", "웅", "네네", "그래요"}
 CONFIRM_NO = {"아니", "아니요", "아뇨", "아니야", "아니에요", "아냐", "아니오", "틀렸어"}
@@ -78,6 +93,11 @@ def _fill(template: str, slots: dict) -> str:
     for k, v in slots.items():
         template = template.replace("{" + k + "}", v)
     return template
+
+
+def _norm_guard(text: str) -> str:
+    """입력 방어막 비교용: 공백·문장부호를 뺀 문장 (한글·영문·숫자만)"""
+    return re.sub(r"[^가-힣A-Za-z0-9]", "", text or "")
 
 
 def _josa(word: str, batchim: str, plain: str) -> str:
@@ -275,6 +295,9 @@ class DialogueEngine:
         self._out_kind = None                 # 마지막으로 만든 응답의 종류 (출력된 질문 유형 기록용)
         self._continuing = False              # 이번 발화가 앞 이야기에 이어지는 말인지 (화제·인물 문맥 문장에만 사용)
         self._listening = False               # 이번 턴이 경청 모드 안인지 (질문·환기 없이 공감·수용만)
+        self._last_user = None                # 직전에 처리한 사용자 텍스트 (정규화 문장, 입력 시각 또는 None, monotonic 시각)
+        self.input_guard_stats: Counter = Counter()          # 입력 방어 횟수 (이유별)
+        self.input_guard_log: deque = deque(maxlen=GUARD_LOG_MAX)   # {reason, gap, length, hash} — 원문은 남기지 않는다
         self._resume_hint = None              # 이번 발화가 STT 재질문 뒤의 발화면 직전 화제 (LLM 문맥용)
         self.ctx = ConversationContext(self.cfg)
         self.state = State.NORMAL
@@ -298,9 +321,12 @@ class DialogueEngine:
         """입력이 있을 때마다 호출. 입력이 없어도 1초 간격으로 빈 입력을 넣어 타이머를 진행시킨다."""
         now = inp.timestamp
         text = (inp.stt or "").strip()
+        sig = analyze(text)                                   # ① 입력 분석 (상태를 바꾸지 않는 순수 분석)
+        guarded = self._input_guard(inp, text, sig)           # 중복·자기 목소리: 어떤 상태도 바꾸기 전에, LLM 대기 취소보다 먼저
+        if guarded is not None:
+            return guarded
         self._text = text
         self._listening = False                               # 경청 모드 여부는 일상 대답 경로에서 이번 턴마다 정한다
-        sig = analyze(text)                                   # ① 입력 분석
         self._resume_hint = None
         self._state_before = self.state                       # LLM 대기 중에는 상태 전환(NORMAL↔EMOTIONAL)을 출력 시점으로 미룬다
         emotion_changed = self.ctx.observe(inp)
@@ -463,7 +489,11 @@ class DialogueEngine:
             sig = dataclasses.replace(sig, medicine=True, medicine_state="ask")
         c.last_medicine = bool(sig.medicine or sig.medicine_state)
         negative = sit.valence == "negative"
-        c.register_user_turn(negative, sig.topics)
+        # 정서 판단의 부정이 표정에서만 나온 턴(텍스트에 부정 근거 없음): 연속 부정 수를 늘리지도 되돌리지도 않는다.
+        # 텍스트에 부정 근거가 있으면 기존대로 +1, 긍정·감사·인사 등 부정이 아닌 판단이면 기존대로 0으로 되돌린다
+        face_only = negative and not (sig.negative or sig.emotion_kind in NEG_EMOTION_KINDS)
+        if not face_only:
+            c.register_user_turn(negative, sig.topics)
         self._update_emotion(sig, sit)                    # 감정 단계 (응답 문장용, 위 집계와 별개)
         self._note_positive(sig)                          # 긍정 요소 기록·제외 (어르신이 직접 좋다·기대된다고 한 일만)
         if pend is None and offer is not None:            # 순서: 확인 대기 → 통증 대답(위) → 환기 제안 대답 → 일반 질문 대답
@@ -564,6 +594,73 @@ class DialogueEngine:
                               + (f", 감정 {emo['emo_kind']} {emo['emo_stage']}단계" if emo else ""))
         out.notice = notice
         return out
+
+    # ───── 입력 방어막 (중복·자기 목소리) ─────
+    def _input_guard(self, inp: DialogueInput, text: str, sig: TextSignals) -> Optional[DialogueOutput]:
+        """무시할 입력이면 상태를 바꾸지 않는 무응답 출력(전략 NONE, 상태 그대로), 아니면 None.
+        중복 여부를 확정할 근거가 있을 때만 무시하고, 의심스러우면 통과시킨다"""
+        if not text:
+            return None
+        norm = _norm_guard(text)
+        mono = time.monotonic()
+        ts = inp.timestamp
+        ts_ok = isinstance(ts, (int, float)) and not isinstance(ts, bool) and math.isfinite(ts) and ts >= 0
+        reason = gap = None
+        if norm and self._guard_applies(inp, sig):
+            prev = self._last_user
+            if prev is not None and norm == prev[0]:
+                # 두 입력 모두 입력 시각을 믿을 수 있으면 그 차이, 둘 다 없으면 monotonic 차이.
+                # 한쪽만 있으면 비교할 수 없으므로 무시하지 않는다. 시각이 거꾸로 가도 무시하지 않는다
+                if ts_ok and prev[1] is not None:
+                    gap = ts - prev[1]
+                elif not ts_ok and prev[1] is None:
+                    gap = mono - prev[2]
+                if gap is not None and 0 <= gap <= DUP_WINDOW_SEC:
+                    reason = "dup"
+            if reason is None and ECHO_GUARD_ENABLED and ts_ok:
+                gap_ai = self._echo_gap(norm, text, sig, ts)
+                if gap_ai is not None:
+                    reason, gap = "echo", gap_ai
+        if reason is not None:
+            self.input_guard_stats[reason] += 1
+            self.input_guard_log.append({"reason": f"input_guard:{reason}", "gap": round(gap, 2), "length": len(norm),
+                                         "hash": hashlib.sha1(norm.encode("utf-8")).hexdigest()[:8]})
+            return DialogueOutput(self.state, Strategy.NONE, None, reason=f"input_guard:{reason}")
+        self._last_user = (norm, ts if ts_ok else None, mono)
+        return None
+
+    def _guard_applies(self, inp: DialogueInput, sig: TextSignals) -> bool:
+        """방어막을 적용해도 되는 턴인지: 일상 대화의 텍스트 단독 입력, 구조 요청·위급 표현이 아님"""
+        if self.state == State.SAFETY_CHECK or self.session is not None:
+            return False                                  # 안전 확인·비상 중에는 모든 입력을 기존 흐름으로
+        if inp.pose is not None or inp.motion is not None or inp.emotion is not None or \
+                inp.sound_event not in (None, "speech"):
+            return False                                  # 낙상음·자세·움직임·표정 등 센서 입력이 함께 온 턴
+        return not (sig.distress == "severe" or sig.self_harm or sig.rescue_like or sig.call_help or sig.urgent
+                    or sig.hazard_level or sig.rescue_unsure)
+
+    def _echo_gap(self, norm: str, text: str, sig: TextSignals, ts: float) -> Optional[float]:
+        """직전 로봇 응답과 거의 같은 입력이면 그 응답 뒤 경과 시간, 아니면 None.
+        유사도보다 먼저: 기존 판정기에서 의미 있게 분류되는 입력(안전·증상·구조 요청·짧은 대답·부정 감정 등)은 절대 무시하지 않는다"""
+        c = self.ctx
+        last = c.recent_ai(1)
+        if not last or c.last_ai_ts is None or len(norm) < ECHO_MIN_LEN:
+            return None
+        words = re.findall(r"[가-힣]+", text)
+        protected = (sig.distress != "none" or sig.self_harm or sig.symptom_said or sig.pain_soft or sig.discomfort
+                     or sig.rescue_like or sig.call_help or sig.urgent or sig.hazard_level or sig.rescue_unsure
+                     or sig.danger_kinds or sig.reports_fall or sig.scream or sig.moan or sig.negative
+                     or sig.emotion_kind in NEG_EMOTION_KINDS or sig.ok or sig.ok_explicit or sig.answer_no
+                     or sig.answer_bearable or sig.small_intent or sig.listen_request or sig.recall_question
+                     or sig.worsening or sig.improving or sig.medicine_state
+                     or (len(words) <= 2 and all(w in CONFIRM_YES | CONFIRM_NO | SHORT_JUST for w in words)))
+        if protected:
+            return None
+        gap = ts - c.last_ai_ts
+        if not 0 <= gap <= ECHO_WINDOW_SEC:
+            return None
+        sim = difflib.SequenceMatcher(None, norm, _norm_guard(last[0])).ratio()
+        return gap if sim >= ECHO_SIM else None
 
     # ───── 질문 예산 (일상 대화에서만) ─────
     def _budget_exempt(self, state, strategy, kind: Optional[str]) -> bool:
@@ -1571,6 +1668,12 @@ class DialogueEngine:
                               alert_status=status, alert_origin=s.first_cause,
                               user_responded=s.responded, reason=reason, assessment=assessment,
                               alert_incident=s.incident, hazard=",".join(s.hazards))
+
+    def end_safety_by_guardian(self, reason: str = "guardian", now: Optional[float] = None) -> None:
+        """보호자가 대시보드에서 해제했을 때 (공개 래퍼). 기존 _end_safety()와 똑같이 동작한다 (보호자 해제 = 내부 해제가 아님).
+        엔진을 처리하는 스레드에서 불러야 한다 (서버 어댑터는 명령 큐를 거쳐 같은 스레드에서 부른다).
+        reason은 인터페이스 호환용 인자이며 따로 기록하지 않는다. now가 없으면 현재 시각"""
+        self._end_safety(time.time() if now is None else now)
 
     def _end_safety(self, now):
         s = self.session

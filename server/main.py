@@ -13,6 +13,8 @@ HTTP
     POST /api/auth/signup|login|logout|demo   GET /api/me
     POST /api/homes {name}   POST /api/homes/join {code}   POST /api/pair {code,name}(로봇)
     GET  /api/homes/{id}/status|events|eval_log|alerts|report
+    GET  /api/homes/{id}/report/dialogues?day=YYYY-MM-DD   (대화 원문, 날짜별)
+    GET  /api/homes/{id}/report/summary/status   POST /api/homes/{id}/report/summary {scope: today|3|7}   (AI 요약, 버튼 누를 때만 LLM)
     POST /api/homes/{id}/dev/{fall|speech|unclear|emotion|present|radar|scenario}   (개발자 도구)
 WS
     /ws/robot?token=...      텍스트(JSON) + 바이너리(1바이트 종류: 1=JPEG 프레임, 2=PCM16 16kHz)
@@ -35,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from server import config as cfgmod
 from server.auth import COOKIE, current_user, ensure_demo_account, require_member, require_user
 from server.core.home import HomeManager
+from server.core.summarizer import Summarizer, day_bounds
 from server.db import DB
 
 log = logging.getLogger("daon")
@@ -47,6 +50,7 @@ class App:
         self.config = config
         os.makedirs(config["logs"]["dir"], exist_ok=True)
         self.db = DB(os.path.join(config["logs"]["dir"], config["logs"]["db"]))
+        self.summarizer = Summarizer(self.db, config["summary"])
         self.demo = ensure_demo_account(self.db, config.get("demo"))
         self.homes = HomeManager(config, self.db, on_create=self._attach_workers)
         self.workers: dict = {}
@@ -226,6 +230,38 @@ def create_app(config: dict) -> FastAPI:
     async def home_report(request: Request, home_id: int, days: int = 7):
         require_member(request, home_id)
         return db.report(home_id, days)
+
+    @app.get("/api/homes/{home_id}/report/summary/status")
+    async def summary_status(request: Request, home_id: int):
+        """AI 요약 사용 가능 여부 (LLM 미설정이면 버튼 비활성화용). LLM 은 부르지 않는다."""
+        require_member(request, home_id)
+        return {"available": await asyncio.to_thread(core.summarizer.available), "limits": {
+            k: config["summary"][k] for k in ("min_messages", "max_messages", "daily_limit", "cooldown_sec")}}
+
+    @app.get("/api/homes/{home_id}/report/dialogues")
+    async def home_report_dialogues(request: Request, home_id: int, day: str | None = None, limit: int = 1000):
+        """대화 원문을 날짜별로 (LLM 호출 없음). day=YYYY-MM-DD (없으면 오늘, 서버 로컬 시간 기준), 시간순."""
+        require_member(request, home_id)
+        try:
+            d, start, end = day_bounds(day)
+        except ValueError:
+            raise HTTPException(400, "day 는 YYYY-MM-DD 형식이어야 합니다")
+        limit = max(1, min(limit, 2000))
+        rows = db.dialogues_between(home_id, start, end, limit + 1)
+        truncated = len(rows) > limit
+        rows = rows[-limit:]                              # 넘치면 오래된 것부터 생략
+        return {"day": d, "count": len(rows), "truncated": truncated,
+                "items": [{"ts": r["ts"], "who": r["data"].get("who"), "text": r["data"].get("text", "")} for r in rows]}
+
+    @app.post("/api/homes/{home_id}/report/summary")
+    async def home_report_summary(request: Request, home_id: int, body: dict = Body(default={})):
+        """보호자가 [AI 요약 보기]를 눌렀을 때만 호출. scope: today(기본) | 3 | 7 (날짜별 요약)."""
+        require_member(request, home_id)
+        try:
+            # LLM 호출은 블로킹이라 스레드로 — 안 그러면 호출 동안 웹소켓 등 서버 전체가 멈춘다
+            return await asyncio.to_thread(core.summarizer.summarize, home_id, str(body.get("scope", "today")))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/homes/{home_id}/dev/{action}")
     async def home_dev(request: Request, home_id: int, action: str, body: dict = Body(default={})):

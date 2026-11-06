@@ -233,3 +233,102 @@ def test_device_status_and_sleep(rig: Rig):
     rig.clock.t += 40
     rig.coord.tick()
     assert rig.coord.ui_state == "sleep"
+
+
+# ---------------- AI 요약 (보호자가 버튼을 누를 때만 LLM) ----------------
+class FakeLLM:
+    """외부 호출 없이 요약 로직만 검증. 호출 횟수와 받은 입력을 기록한다."""
+
+    def __init__(self, reply: str | None = "■ 주요 화제: 안부") -> None:
+        self.reply, self.calls, self.last_user, self.last_error = reply, 0, "", None
+
+    def generate(self, system, messages, timeout=None, max_tokens=None):
+        self.calls += 1
+        self.last_user = messages[-1]["content"]
+        self.last_error = None if self.reply else "timeout"
+        return self.reply
+
+
+def _summ_rig(n_msgs: int, llm: FakeLLM | None, **over):
+    from server.core.summarizer import Summarizer
+    db = DB(os.path.join(tempfile.mkdtemp(), "s.db"))
+    user = db.create_user("s@s.s", "pass", "s")
+    home = db.create_home("집", user["id"])
+    clock = Clock(1_760_000_000.0 + 12 * 3600)         # 하루 중간 (로컬 자정 직후 경계 회피)
+    for i in range(n_msgs):
+        who = "robot" if i % 2 else "user"
+        db.record_event(home["id"], "dialogue", {"who": who, "text": f"{'긴말' * 30 if who == 'robot' else '안녕'} {i}"},
+                        ts=clock() - (n_msgs - i))
+    cfg = {**cfgmod.DEFAULTS["summary"], **over}
+    return Summarizer(db, cfg, client_factory=lambda: llm, clock=clock), db, home["id"], clock
+
+
+def test_summary_too_few_messages_no_llm_call():
+    llm = FakeLLM()
+    s, db, hid, _ = _summ_rig(3, llm)
+    r = s.summarize(hid, "today")["days"][0]
+    assert r["status"] == "too_few" and r["count"] == 3 and llm.calls == 0
+
+
+def test_summary_cached_until_new_dialogue():
+    llm = FakeLLM()
+    s, db, hid, clock = _summ_rig(6, llm)
+    assert s.summarize(hid, "today")["days"][0]["status"] == "ok" and llm.calls == 1
+    again = s.summarize(hid, "today")["days"][0]
+    assert again["status"] == "cached" and again["text"] and llm.calls == 1      # 새 대화 없음 → LLM 안 부름
+    db.record_event(hid, "dialogue", {"who": "user", "text": "새 대화"}, ts=clock() - 0.5)
+    cool = s.summarize(hid, "today")["days"][0]
+    assert cool["status"] == "cooldown" and cool["text"] and llm.calls == 1      # 새 대화 있어도 쿨다운 중
+    clock.t += 301
+    assert s.summarize(hid, "today")["days"][0]["status"] == "ok" and llm.calls == 2
+
+
+def test_summary_limits_and_trimming():
+    llm = FakeLLM()
+    s, db, hid, _ = _summ_rig(40, llm, max_messages=10, max_chars=60, robot_text_chars=10)
+    s.summarize(hid, "today")
+    lines = llm.last_user.splitlines()
+    assert len(llm.last_user) <= 60                                              # 글자 수 상한
+    assert "안녕 36" in llm.last_user and "안녕 30" not in llm.last_user          # 오래된 것부터 버리고 최신 유지
+    assert lines[-1].startswith("로봇")                                           # 마지막(39번)은 로봇 발화
+    assert all(len(ln) <= len("로봇: ") + 11 for ln in lines if ln.startswith("로봇"))   # 로봇 발화는 줄임
+    s2, _, hid2, _ = _summ_rig(40, FakeLLM(), max_messages=10)
+    assert s2.summarize(hid2, "today")["days"][0]["count"] == 10
+
+
+def test_dialogues_by_day_and_day_bounds():
+    from server.core.summarizer import day_bounds
+    s, db, hid, clock = _summ_rig(6, None)
+    day, start, end = day_bounds(None, clock())
+    assert end - start in (86400, 82800, 90000) and start <= clock() < end            # 오늘 하루 (DST 허용)
+    assert len(db.dialogues_between(hid, start, end, 100)) == 6
+    assert day_bounds(day)[1] == start                                                # 날짜 문자열로도 같은 범위
+    assert db.dialogues_between(hid, start - 86400, start, 100) == []                 # 전날은 비어 있음
+    with pytest.raises(ValueError):
+        day_bounds("2026/11/06")
+
+
+def test_summary_past_days_reuse_cache():
+    """3일 요약 뒤 7일 요약: 이미 요약된 날은 LLM 을 다시 부르지 않고, 새 날짜만 부른다."""
+    llm = FakeLLM()
+    s, db, hid, clock = _summ_rig(6, llm)
+    for off in range(1, 7):                                                           # 어제~6일 전에 각각 대화 6건
+        for i in range(6):
+            db.record_event(hid, "dialogue", {"who": "user", "text": f"{off}일 전 {i}"}, ts=clock() - off * 86400 - i)
+    s.summarize(hid, "3")
+    assert llm.calls == 3
+    s.summarize(hid, "7")
+    assert llm.calls == 7                                                             # 3 + 새로 4 (기존 3일은 재호출 없음)
+
+
+def test_summary_daily_limit_and_failure_and_unavailable():
+    s, db, hid, clock = _summ_rig(6, FakeLLM(reply=None))
+    assert s.summarize(hid, "today")["days"][0]["status"] == "failed"            # 실패 → 저장 안 함
+    assert db.summary_get(hid, s.summarize(hid, "today")["days"][0]["day"]) is None
+    s_lim, _, hid3, _ = _summ_rig(6, FakeLLM(), daily_limit=0)
+    assert s_lim.summarize(hid3, "today")["days"][0]["status"] == "limit"
+    s_off, _, hid4, _ = _summ_rig(6, None)
+    assert s_off.summarize(hid4, "today")["days"][0]["status"] == "unavailable" and not s_off.available()
+    with pytest.raises(ValueError):
+        s.summarize(hid, "30")
+

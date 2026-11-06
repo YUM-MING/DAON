@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS alerts (
     resolved_ts REAL, resolution TEXT, handled_by TEXT, cause TEXT, title TEXT, sensors TEXT, fused TEXT);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY, home_id INTEGER NOT NULL, ts REAL NOT NULL, type TEXT NOT NULL, data TEXT);
+CREATE TABLE IF NOT EXISTS summaries (
+    home_id INTEGER NOT NULL, day TEXT NOT NULL, last_event_id INTEGER NOT NULL, msg_count INTEGER NOT NULL,
+    text TEXT NOT NULL, created_ts REAL NOT NULL, PRIMARY KEY (home_id, day));
+CREATE TABLE IF NOT EXISTS summary_calls (
+    id INTEGER PRIMARY KEY, home_id INTEGER NOT NULL, ts REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_summary_calls_home ON summary_calls(home_id, ts);
 CREATE INDEX IF NOT EXISTS idx_events_home_ts ON events(home_id, ts);
 CREATE INDEX IF NOT EXISTS idx_alerts_home ON alerts(home_id, created_ts);
 """
@@ -226,3 +232,30 @@ class DB:
         alerts = self.alerts(hid, 50)
         return {"days": days, "emotion_week": week_rows, "conversations": list(reversed(convo)),
                 "alerts": alerts, "alert_count": len([a for a in alerts if a["created_ts"] >= since])}
+
+    # ---------------- AI 요약 (보호자가 버튼을 눌렀을 때만) ----------------
+    def dialogues_between(self, hid: int, start: float, end: float, limit: int) -> list[dict]:
+        """[start, end) 구간의 대화(dialogue 이벤트)를 시간순으로. limit 을 넘으면 오래된 것부터 버린다."""
+        rows = self._q("SELECT * FROM events WHERE home_id=? AND type='dialogue' AND ts>=? AND ts<? "
+                       "ORDER BY ts DESC, id DESC LIMIT ?", hid, start, end, limit)
+        out = []
+        for r in reversed(rows):
+            d = self.row(r)
+            d["data"] = json.loads(d["data"] or "{}")
+            out.append(d)
+        return out
+
+    def summary_get(self, hid: int, day: str) -> Optional[dict]:
+        return self.row(self._one("SELECT * FROM summaries WHERE home_id=? AND day=?", hid, day))
+
+    def summary_put(self, hid: int, day: str, last_event_id: int, msg_count: int, text: str, ts: float) -> None:
+        self._q("INSERT OR REPLACE INTO summaries(home_id,day,last_event_id,msg_count,text,created_ts) "
+                "VALUES(?,?,?,?,?,?)", hid, day, last_event_id, msg_count, text, ts)
+
+    def summary_call_log(self, hid: int, ts: float) -> None:
+        """LLM 을 실제로 부른 시각 기록 (집당 하루 호출 상한 계산용)."""
+        self._insert("INSERT INTO summary_calls(home_id,ts) VALUES(?,?)", hid, ts)
+
+    def summary_calls_since(self, hid: int, since: float) -> int:
+        r = self._one("SELECT COUNT(*) AS n FROM summary_calls WHERE home_id=? AND ts>=?", hid, since)
+        return int(r["n"]) if r else 0

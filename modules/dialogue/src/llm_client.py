@@ -59,22 +59,26 @@ class LLMClient:
         return f"LLMClient(provider={self.provider!r}, model={self.model!r}, timeout={self.timeout})"
 
     # ---------- 제공자별 요청 ----------
-    def _request(self, system: str, messages: list):
+    def _request(self, system: str, messages: list, max_tokens: Optional[int] = None):
+        """max_tokens 를 안 주면 기존 동작 그대로 (Claude/Gemini 는 MAX_OUTPUT_TOKENS, OpenAI 는 제한 없음)."""
         if self.provider == "claude":
             url = "https://api.anthropic.com/v1/messages"
             headers = {"x-api-key": self._key, "anthropic-version": "2023-06-01"}
-            body = {"model": self.model, "max_tokens": MAX_OUTPUT_TOKENS, "system": system, "messages": messages}
+            body = {"model": self.model, "max_tokens": max_tokens or MAX_OUTPUT_TOKENS, "system": system,
+                    "messages": messages}
         elif self.provider == "openai":
             url = "https://api.openai.com/v1/chat/completions"
             headers = {"Authorization": "Bearer " + self._key}
             body = {"model": self.model, "messages": [{"role": "system", "content": system}] + messages}
+            if max_tokens:
+                body["max_completion_tokens"] = int(max_tokens)
         else:                                       # gemini: 키는 URL이 아니라 헤더로 (URL이 로그에 남아도 키가 없게)
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
             headers = {"x-goog-api-key": self._key}
             body = {"systemInstruction": {"parts": [{"text": system}]},
                     "contents": [{"role": "model" if m["role"] == "assistant" else "user",
                                   "parts": [{"text": m["content"]}]} for m in messages],
-                    "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS}}
+                    "generationConfig": {"maxOutputTokens": max_tokens or MAX_OUTPUT_TOKENS}}
         return url, {**headers, "content-type": "application/json"}, body
 
     def _parse(self, data: dict) -> Optional[str]:
@@ -88,14 +92,15 @@ class LLMClient:
         text = "".join(parts).strip()
         return text or None
 
-    def generate(self, system: str, messages, timeout: Optional[float] = None) -> Optional[str]:
+    def generate(self, system: str, messages, timeout: Optional[float] = None,
+                 max_tokens: Optional[int] = None) -> Optional[str]:
         self.last_error = None
         try:
             msgs = _normalize(messages)
             if not msgs:
                 self.last_error = "no_messages"
                 return None
-            url, headers, body = self._request(system, msgs)
+            url, headers, body = self._request(system, msgs, max_tokens)
             req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))

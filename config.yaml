@@ -35,6 +35,18 @@ robot:
   tts_timeout_sec: 12
   wake_to_listen_sec: 2
 
+# 리포트 탭 '대화 요약'의 AI 요약. 보호자가 [AI 요약 보기]를 누를 때만 LLM 을 부른다.
+# LLM 제공자·모델·API 키는 modules/dialogue/.env (DIALOGUE_LLM, DIALOGUE_LLM_MODEL, *_API_KEY) 를 그대로 쓴다.
+summary:
+  max_messages: 200      # 하루치에서 참고할 최대 대화 수 (넘으면 오래된 것부터 버림)
+  max_chars: 6000        # LLM 에 보내는 최대 글자 수 (넘으면 오래된 것부터 버림)
+  min_messages: 4        # 이보다 적으면 요약하지 않음 (LLM 호출 안 함)
+  robot_text_chars: 40   # 로봇 발화는 앞 N자만 사용 (토큰 절약)
+  daily_limit: 20        # 집당 하루 LLM 호출 상한
+  cooldown_sec: 300      # 같은 날짜를 다시 요약하기까지 최소 대기 (그동안은 저장된 요약을 보여줌)
+  timeout_sec: 20        # LLM 응답 대기 제한
+  max_tokens: 800        # 요약 출력 길이 상한
+
 logs:
   dir: logs
   eval_log: eval_log.jsonl     # logs/<집코드>/eval_log.jsonl

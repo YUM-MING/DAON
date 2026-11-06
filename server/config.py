@@ -22,6 +22,9 @@ DEFAULTS: dict[str, Any] = {
         "dialogue": {"mode": "real"},
     },
     "robot": {"sleep_after_absent_sec": 30, "tts_timeout_sec": 12, "wake_to_listen_sec": 2},
+    # 리포트 '대화 요약'의 AI 요약 (보호자가 버튼을 눌렀을 때만 LLM 호출). LLM 제공자·키는 modules/dialogue/.env 공유
+    "summary": {"max_messages": 200, "max_chars": 6000, "min_messages": 4, "robot_text_chars": 40,
+                "daily_limit": 20, "cooldown_sec": 300, "timeout_sec": 20, "max_tokens": 800},
     "logs": {"dir": "logs", "eval_log": "eval_log.jsonl", "alerts": "alerts.jsonl", "scenario_id": "live",
              "db": "daon.db"},
     "demo": {"email": "demo@daon.local", "password": "daon1234", "name": "개발자", "home_name": "데모 집",

@@ -47,7 +47,7 @@ function resolveAlert(resolution){
   document.getElementById("emergencyOverlay").classList.add("hidden");
   document.getElementById("statusBadge").textContent = "안정";
   document.getElementById("statusBadge").className = "badge dot ok";
-  document.getElementById("silhouette").textContent = "🧍";
+  document.getElementById("silhouette").classList.remove("alert");
 
   const label = { guardian_confirmed:"확인 완료", false_alarm:"오탐 처리", called_119:"119 연결" }[resolution] || resolution;
   addEventRow({

@@ -74,8 +74,14 @@ function renderEmotionWeek(containerId, days){
   el.innerHTML = days.map(d=>{
     const h = d.happy||0, n = d.neutral||0, s = d.sad||0, a = d.angry||0, u = d.surprised||0;
     const total = (h+n+s+a+u) || 1;
+    // 막대 위에 감정별 횟수 (0회는 생략)
+    const counts = [["기쁨",h,"#ffd35b"],["중립",n,"#8fa6ff"],["슬픔",s,"#6b8cff"],["화남",a,"#ff8a6b"],["놀람",u,"#b98cff"]]
+      .filter(c=>c[1]>0)
+      .map(c=>`<span style="white-space:nowrap;"><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c[2]};margin-right:3px;"></i>${c[0]} <b>${c[1]}</b>회</span>`)
+      .join("");
     return `<div class="bar-group">
       <div class="bg-label"><span>${d.day}요일</span><span class="muted">총 ${h+n+s+a+u}회</span></div>
+      <div style="display:flex; flex-wrap:wrap; gap:2px 12px; font-size:12px; margin-bottom:4px;">${counts}</div>
       <div class="bar-track">
         <div class="bar-fill" style="width:${h/total*100}%; background:#ffd35b" title="기쁨 ${h}"></div>
         <div class="bar-fill" style="width:${n/total*100}%; background:#8fa6ff" title="중립 ${n}"></div>

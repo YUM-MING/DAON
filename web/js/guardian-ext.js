@@ -164,13 +164,73 @@
           ew.innerHTML = "";
           renderEmotionWeek("emotionWeekChart", r.emotion_week);
         } else if(ew){ ew.innerHTML = '<p class="muted">최근 7일 표정 기록이 없습니다</p>'; }
-        const ul = document.getElementById("convoSummary");
-        if(ul){
-          const items = (r.conversations || []).slice(-12).map(c => `<li>${t(c.ts)} ${c.data.who === "robot" ? "🤖" : "👵"} ${c.data.text}</li>`);
-          ul.innerHTML = items.length ? items.join("") : `<li class="muted">최근 7일 대화 기록이 없습니다</li>`;
-        }
       }).catch(()=>{});
     }
+
+    /* ---------- 리포트 탭: 대화 원문 (날짜별, LLM 호출 없음 · 자동 갱신 없음) ---------- */
+    (function setupConvoByDay(){
+      const input = document.getElementById("convoDay"), list = document.getElementById("convoList"), info = document.getElementById("convoInfo");
+      if(!input || !list) return;
+      const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+      const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+      const shift = (days) => { const d = new Date((input.value || ymd(new Date())) + "T00:00:00"); d.setDate(d.getDate() + days); return ymd(d); };
+      async function load(){
+        info.textContent = "불러오는 중…";
+        try{
+          const r = await api(`/api/homes/${hid}/report/dialogues?day=${encodeURIComponent(input.value)}`);
+          list.innerHTML = r.items.length
+            ? r.items.map(c => `<li>${t(c.ts)} ${c.who === "robot" ? "🤖" : "👵"} ${esc(c.text)}</li>`).join("")
+            : `<li class="muted">${r.day} 대화 기록이 없습니다</li>`;
+          info.textContent = `${r.day} · ${r.count}건` + (r.truncated ? " (오래된 대화 일부 생략)" : "");
+        }catch(err){ list.innerHTML = ""; info.textContent = err.message; }
+      }
+      const setDay = (v) => { input.value = v; load(); };
+      input.max = ymd(new Date());
+      input.addEventListener("change", () => { if(input.value) load(); });
+      document.getElementById("convoPrev").addEventListener("click", () => setDay(shift(-1)));
+      document.getElementById("convoNext").addEventListener("click", () => { const n = shift(1); if(n <= input.max) setDay(n); });
+      document.getElementById("convoToday").addEventListener("click", () => setDay(ymd(new Date())));
+      document.getElementById("convoRefresh").addEventListener("click", load);
+      setDay(ymd(new Date()));
+    })();
+    /* ---------- 리포트 탭: AI 요약 (버튼을 눌렀을 때만 서버가 LLM 호출) ---------- */
+    (function setupAiSummary(){
+      const btn = document.getElementById("aiSummaryBtn");
+      const scope = document.getElementById("aiSummaryScope");
+      const out = document.getElementById("aiSummaryResult");
+      if(!btn || !scope || !out) return;
+      const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+      const MSG = {
+        too_few: (d) => `대화가 ${d.count}건뿐이라 요약하지 않았습니다 (최소 4건 필요)`,
+        cooldown: (d) => `방금 요약했습니다. ${Math.ceil((d.retry_after || 0) / 60)}분 뒤 새 대화까지 포함해 다시 요약할 수 있습니다 (저장된 요약 표시)`,
+        limit: () => "오늘의 AI 요약 사용 한도에 도달했습니다 (저장된 요약이 있으면 표시)",
+        unavailable: () => "AI 요약이 설정되어 있지 않습니다 (서버의 LLM 설정 필요)",
+        failed: () => "지금은 요약할 수 없습니다. 잠시 후 다시 시도하거나 아래 원문 대화를 확인하세요",
+      };
+      api(`/api/homes/${hid}/report/summary/status`).then(s => {
+        if(!s.available){ btn.disabled = true; btn.title = "서버에 LLM 이 설정되지 않았습니다"; out.innerHTML = `<p class="muted">${MSG.unavailable()}</p>`; }
+      }).catch(()=>{});
+      btn.addEventListener("click", async () => {
+        btn.disabled = true; const label = btn.textContent; btn.textContent = "요약 중…";
+        out.innerHTML = `<p class="muted">AI가 대화를 요약하고 있어요…</p>`;
+        try{
+          const r = await api(`/api/homes/${hid}/report/summary`, { scope: scope.value });
+          out.innerHTML = r.days.map(d => {
+            const note = d.status === "ok" || d.status === "cached" ? "" : (MSG[d.status] ? MSG[d.status](d) : "");
+            const when = d.created_ts ? ` · ${t(d.created_ts)} 요약` : "";
+            const body = d.text ? `<div style="white-space:pre-wrap; font-size:13px; line-height:1.6;">${esc(d.text)}</div>` : "";
+            return `<div class="card" style="padding:10px 12px; margin-bottom:8px;">
+              <div class="muted" style="font-size:12px; margin-bottom:4px;"><b>${d.day}</b> · 대화 ${d.count}건${when}</div>
+              ${body}${note ? `<p class="muted" style="font-size:12px; margin:4px 0 0;">${note}</p>` : ""}</div>`;
+          }).join("");
+        }catch(err){
+          out.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+        }finally{
+          btn.disabled = false; btn.textContent = label;
+        }
+      });
+    })();
+
     renderReport();
     document.addEventListener("daon:analysis", renderReport);      // 분석 탭 목업이 리포트를 덮어쓰면 다시 그림
     setInterval(renderReport, 30000);

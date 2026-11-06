@@ -157,7 +157,7 @@
         document.getElementById("emergencyOverlay").classList.remove("hidden");
         const sb = document.getElementById("statusBadge");
         if(sb){ sb.textContent = "주의"; sb.className = "badge dot danger"; }
-        const sil = document.getElementById("silhouette"); if(sil) sil.textContent = "⚠️";
+        const sil = document.getElementById("silhouette"); if(sil) sil.classList.add("alert");
         if(typeof addEventRow === "function")
           addEventRow({ time:t(m.ts), type: m.status === "realert" ? "재알림" : "낙상 의심", sensors:`pose:${s.pose} audio:${s.audio} radar:${s.radar}`, status:"대기 중" });
         if(typeof toast === "function") toast("🚨 " + (m.title || "긴급 알림"));
@@ -167,7 +167,7 @@
         document.getElementById("emergencyOverlay").classList.add("hidden");
         const sb = document.getElementById("statusBadge");
         if(sb){ sb.textContent = "안정"; sb.className = "badge dot ok"; }
-        const sil = document.getElementById("silhouette"); if(sil) sil.textContent = "🧍";
+        const sil = document.getElementById("silhouette"); if(sil) sil.classList.remove("alert");
         if(typeof addEventRow === "function")
           addEventRow({ time:t(m.ts), type:"낙상 의심", status:"처리됨", result: RES_KO[m.resolution] || m.resolution, handler: m.handled_by || "-" });
         activeAlertId = null;

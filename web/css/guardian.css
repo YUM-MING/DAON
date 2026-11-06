@@ -47,8 +47,11 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
   background:linear-gradient(180deg,#f3f4ff,#dfe3fa);
   box-shadow:0 8px 20px rgba(110,122,210,.22), inset 0 0 0 4px #fff;
   display:flex; align-items:center; justify-content:center; font-size:50px;
-  flex-shrink:0;
+  flex-shrink:0; overflow:hidden;
 }
+.silhouette img{ width:100%; height:100%; object-fit:cover; display:block; }
+/* 긴급(주의) 상태: 이모티콘 대신 이미지 둘레를 붉게 표시 */
+.silhouette.alert{ box-shadow:0 0 0 4px var(--danger), 0 8px 20px rgba(255,60,60,.35); }
 
 .warn-banner{
   margin-top:12px; padding:10px 14px; border-radius:10px;

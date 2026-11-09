@@ -37,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from server import config as cfgmod
 from server.auth import COOKIE, current_user, ensure_demo_account, require_member, require_user
 from server.core.home import HomeManager
+from server.core import report_stats
 from server.core.summarizer import Summarizer, day_bounds
 from server.db import DB
 
@@ -252,6 +253,18 @@ def create_app(config: dict) -> FastAPI:
         rows = rows[-limit:]                              # 넘치면 오래된 것부터 생략
         return {"day": d, "count": len(rows), "truncated": truncated,
                 "items": [{"ts": r["ts"], "who": r["data"].get("who"), "text": r["data"].get("text", "")} for r in rows]}
+
+    @app.get("/api/homes/{home_id}/report/stats")
+    async def home_report_stats(request: Request, home_id: int, days: str = "7"):
+        """대화 내용 통계 (LLM 호출 없음, 언급 기준 집계·basis=user_said). days: 1~30 정수 (아니면 400).
+        conversations 는 날짜별 발화·응답 건수(세션 수 아님). user_msgs 는 중복 제거 뒤 어르신 발화 전부(STT 불명확·회상
+        질문 포함), analyzed 는 그중 내용 통계에 들어간 수, skipped.duplicate 는 user_msgs 에도 넣지 않은 중복 건수."""
+        require_member(request, home_id)
+        try:
+            n = report_stats.parse_days(days)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return await asyncio.to_thread(report_stats.compute, db, home_id, n, time.time())
 
     @app.post("/api/homes/{home_id}/report/summary")
     async def home_report_summary(request: Request, home_id: int, body: dict = Body(default={})):

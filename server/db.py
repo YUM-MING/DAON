@@ -259,3 +259,16 @@ class DB:
     def summary_calls_since(self, hid: int, since: float) -> int:
         r = self._one("SELECT COUNT(*) AS n FROM summary_calls WHERE home_id=? AND ts>=?", hid, since)
         return int(r["n"]) if r else 0
+
+    # ---------------- 리포트 '대화 내용 통계' (report_stats) ----------------
+    def report_dialogue_events(self, hid: int, start: float, end: float, limit: int = 20000) -> list[dict]:
+        """[start, end) 구간의 대화(dialogue 이벤트: 어르신·로봇)를 오래된 것부터. 통계용이라 앞에서부터 limit 건
+        (dialogues_between 은 최신 limit 건을 잡아 기간이 길면 오래된 발화가 잘리므로 따로 둔다)."""
+        rows = self._q("SELECT id, ts, data FROM events WHERE home_id=? AND type='dialogue' AND ts>=? AND ts<? "
+                       "ORDER BY ts ASC, id ASC LIMIT ?", hid, start, end, limit)
+        out = []
+        for r in rows:
+            d = self.row(r)
+            d["data"] = json.loads(d["data"] or "{}")
+            out.append(d)
+        return out

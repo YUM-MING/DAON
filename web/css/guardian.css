@@ -164,3 +164,43 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
 .rs-want-label{ font-size:12px; color:var(--muted); margin-bottom:4px; }
 .rs-chips{ display:flex; flex-wrap:wrap; gap:6px; }
 .rs-chip{ font-size:12px; padding:4px 10px; border-radius:999px; background:#eef0fc; }
+
+/* ---- 리포트: 이번 주 어르신 상태 요약 카드 (report-insights.js) ---- */
+#reportInsightsCard .ri-top{ display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+#reportInsightsCard .ri-top h3{ margin:0; }
+#reportInsightsCard .ri-note{ font-size:12px; line-height:1.5; margin:6px 0 12px; }
+.ri-msg{ font-size:13px; margin:8px 0; }
+.ri-msg.ri-error{ color:var(--danger); }
+.ri-head{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin-bottom:8px; }
+.ri-level{ display:inline-block; padding:5px 14px; border-radius:999px; font-weight:800; font-size:14px;
+           border:1.5px solid currentColor; white-space:nowrap; }
+.ri-lv-check{ color:var(--danger); background:#fde8ea; }
+.ri-lv-watch{ color:var(--warn); background:#fdf3e0; }
+.ri-lv-pending{ color:var(--muted); background:#f0f1fd; }
+.ri-lv-clear{ color:var(--accent); background:#eef0fc; }
+.ri-lv-other{ color:var(--fg); background:#f0f1fd; }
+.ri-clear-note{ font-size:12px; color:var(--muted); line-height:1.5; flex:1 1 220px; min-width:0; }
+.ri-summary{ margin:0 0 8px; font-size:14px; line-height:1.6; overflow-wrap:anywhere; }
+.ri-basis{ font-size:12px; overflow-wrap:anywhere; }
+.ri-reason{ margin-top:6px; padding:8px 12px; border-radius:12px; font-size:13px; font-weight:600;
+            color:var(--warn); background:#fdf3e0; overflow-wrap:anywhere; }
+.ri-sec{ margin-top:14px; }
+.ri-sec-title{ margin:0 0 8px; font-size:13px; color:var(--fg); }
+.ri-none{ font-size:13px; margin:0; }
+.ri-signals, .ri-alerts, .ri-recs, .ri-changes{ list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px; }
+.ri-signal{ padding:10px 12px; border-radius:12px; background:#f0f1fd; min-width:0; }
+.ri-signal-top{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.ri-signal-title{ font-weight:700; font-size:13px; overflow-wrap:anywhere; }
+.ri-signal-detail{ margin-top:4px; font-size:13px; line-height:1.55; overflow-wrap:anywhere; }
+.ri-chip{ font-size:11px; font-weight:800; padding:2px 8px; border-radius:999px; border:1px solid currentColor; white-space:nowrap; }
+.ri-sg-check{ color:var(--danger); background:#fde8ea; }
+.ri-sg-warn{ color:var(--warn); background:#fdf3e0; }
+.ri-sg-note{ color:var(--accent); background:#eef0fc; }
+.ri-sg-other{ color:var(--fg); background:#f6f6fd; }
+.ri-ref{ font-size:11px; color:var(--muted); padding:1px 6px; border-radius:6px; border:1px dashed var(--muted); white-space:nowrap; }
+.ri-alerts li, .ri-recs li, .ri-changes li{ font-size:13px; padding:6px 10px; border-radius:10px; background:#f6f6fd; overflow-wrap:anywhere; }
+.ri-small{ font-size:11px; margin-top:6px; line-height:1.5; }
+.ri-compare{ margin-top:14px; font-size:13px; }
+.ri-compare summary{ cursor:pointer; font-weight:700; margin-bottom:6px; }
+.ri-compare-off{ margin-top:14px; }
+.ri-foot{ font-size:11px; margin-top:14px; overflow-wrap:anywhere; }

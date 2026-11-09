@@ -6,7 +6,7 @@
 <title>실버케어 AI — 보호자 대시보드</title>
 <link rel="stylesheet" href="css/base.css?v=4">
 <link rel="stylesheet" href="css/theme-minimal.css?v=4">
-<link rel="stylesheet" href="css/guardian.css?v=6">
+<link rel="stylesheet" href="css/guardian.css?v=7">
 </head>
 <body>
 
@@ -118,6 +118,15 @@
 
   <!-- ===================== 리포트 탭 ===================== -->
   <section class="tab-panel" id="tab-report">
+    <div class="card mb16" id="reportInsightsCard">
+      <div class="ri-top">
+        <h3>이번 주 어르신 상태 요약</h3>
+        <button class="btn sm ghost" id="reportInsightsRefresh" title="다시 불러오기">↻ 새로고침</button>
+      </div>
+      <div class="muted ri-note" id="reportInsightsDisclaimer">대화 내용과 기록을 바탕으로 한 참고용 주의 신호이며 진단이나 예측이 아닙니다.</div>
+      <div id="reportInsightsBody" aria-live="polite"></div>
+    </div>
+
     <div class="grid-2">
       <div class="card">
         <h3>주간 감정 통계</h3>
@@ -225,5 +234,6 @@
 <script src="js/ws-client.js"></script>    <!-- 통합 서버 연결 (file:// 로 열면 비활성) -->
 <script src="js/guardian-ext.js"></script> <!-- 집 코드·로그아웃·개발자 도구·리포트 -->
 <script src="js/report-stats.js?v=1"></script> <!-- 리포트: 대화 내용 통계 카드 -->
+<script src="js/report-insights.js?v=1"></script> <!-- 리포트: 이번 주 어르신 상태 요약 카드 -->
 </body>
 </html>

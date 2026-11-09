@@ -197,15 +197,34 @@ class DB:
             out.append(d)
         return out
 
+    # 알림 ID(a-001…)는 coordinator 카운터라 서버를 다시 켜면 처음부터 다시 쓴다.
+    # 그래서 '이번 실행에서 만든 행'만 같은 알림으로 본다: 이 DB 객체가 처음 알림을 다룰 때의 최대 행 id 보다 큰 행.
+    # (created_ts 는 이벤트 시계라 실제 시각과 다를 수 있어 행 id 로 구분한다. 알림 INSERT 는 alert_create 하나뿐.)
+    def _alert_floor(self) -> int:
+        with self._lock:
+            if getattr(self, "_alert_floor_id", None) is None:
+                r = self._one("SELECT COALESCE(MAX(id), 0) AS m FROM alerts")
+                self._alert_floor_id = int(r["m"])
+            return self._alert_floor_id
+
+    def _alert_open_now(self, hid: int, alert_id: str) -> Optional[sqlite3.Row]:
+        """이번 실행에서 만든, 아직 해제 안 된 같은 ID 알림 중 가장 최근 행."""
+        return self._one("SELECT id FROM alerts WHERE home_id=? AND alert_id=? AND resolved_ts IS NULL AND id>? "
+                         "ORDER BY id DESC LIMIT 1", hid, alert_id, self._alert_floor())
+
     def alert_create(self, hid: int, alert_id: str, ts: float, cause: str, title: str, sensors: dict, fused: dict) -> None:
-        if self._one("SELECT 1 FROM alerts WHERE home_id=? AND alert_id=?", hid, alert_id):
-            return
-        self._insert("INSERT INTO alerts(home_id,alert_id,created_ts,cause,title,sensors,fused) VALUES(?,?,?,?,?,?,?)",
-                     hid, alert_id, ts, cause, title, json.dumps(sensors, ensure_ascii=False), json.dumps(fused))
+        with self._lock:
+            if self._alert_open_now(hid, alert_id):      # 같은 실행의 updated/realert 재호출 → 1행 유지
+                return
+            self._insert("INSERT INTO alerts(home_id,alert_id,created_ts,cause,title,sensors,fused) VALUES(?,?,?,?,?,?,?)",
+                         hid, alert_id, ts, cause, title, json.dumps(sensors, ensure_ascii=False), json.dumps(fused))
 
     def alert_resolve(self, hid: int, alert_id: str, ts: float, resolution: str, handled_by: str) -> None:
-        self._q("UPDATE alerts SET resolved_ts=?, resolution=?, handled_by=? WHERE home_id=? AND alert_id=? AND resolved_ts IS NULL",
-                ts, resolution, handled_by, hid, alert_id)
+        with self._lock:                                 # 이전 실행의 열린 알림은 건드리지 않는다
+            r = self._alert_open_now(hid, alert_id)
+            if r:
+                self._q("UPDATE alerts SET resolved_ts=?, resolution=?, handled_by=? WHERE id=?",
+                        ts, resolution, handled_by, r["id"])
 
     def alerts(self, hid: int, limit: int = 100) -> list[dict]:
         out = []

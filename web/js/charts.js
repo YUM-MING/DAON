@@ -72,15 +72,16 @@ function renderEmotionWeek(containerId, days){
   // days = [{day:'월', happy:3,sad:1,angry:0,neutral:5}]
   const el = document.getElementById(containerId);
   el.innerHTML = days.map(d=>{
-    const h = d.happy||0, n = d.neutral||0, s = d.sad||0, a = d.angry||0, u = d.surprised||0;
-    const total = (h+n+s+a+u) || 1;
+    // fear = 카메라 표정 '불안(표정)' (서버가 표정 라벨 그대로 집계; 대화 속 '불안' 언급과는 다른 데이터)
+    const h = d.happy||0, n = d.neutral||0, s = d.sad||0, a = d.angry||0, u = d.surprised||0, f = d.fear||0;
+    const total = (h+n+s+a+u+f) || 1;
     // 막대 위에 감정별 횟수 (0회는 생략)
-    const counts = [["기쁨",h,"#ffd35b"],["중립",n,"#8fa6ff"],["슬픔",s,"#6b8cff"],["화남",a,"#ff8a6b"],["놀람",u,"#b98cff"]]
+    const counts = [["기쁨",h,"#ffd35b"],["중립",n,"#8fa6ff"],["슬픔",s,"#6b8cff"],["화남",a,"#ff8a6b"],["놀람",u,"#b98cff"],["불안(표정)",f,"#4fbf9f"]]
       .filter(c=>c[1]>0)
       .map(c=>`<span style="white-space:nowrap;"><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c[2]};margin-right:3px;"></i>${c[0]} <b>${c[1]}</b>회</span>`)
       .join("");
     return `<div class="bar-group">
-      <div class="bg-label"><span>${d.day}요일</span><span class="muted">총 ${h+n+s+a+u}회</span></div>
+      <div class="bg-label"><span>${d.day}요일</span><span class="muted">총 ${h+n+s+a+u+f}회</span></div>
       <div style="display:flex; flex-wrap:wrap; gap:2px 12px; font-size:12px; margin-bottom:4px;">${counts}</div>
       <div class="bar-track">
         <div class="bar-fill" style="width:${h/total*100}%; background:#ffd35b" title="기쁨 ${h}"></div>
@@ -88,6 +89,7 @@ function renderEmotionWeek(containerId, days){
         <div class="bar-fill" style="width:${s/total*100}%; background:#6b8cff" title="슬픔 ${s}"></div>
         <div class="bar-fill" style="width:${a/total*100}%; background:#ff8a6b" title="화남 ${a}"></div>
         <div class="bar-fill" style="width:${u/total*100}%; background:#b98cff" title="놀람 ${u}"></div>
+        <div class="bar-fill" style="width:${f/total*100}%; background:#4fbf9f" title="불안(표정) ${f}"></div>
       </div>
     </div>`;
   }).join("");

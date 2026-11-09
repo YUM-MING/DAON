@@ -133,3 +133,34 @@ input[type=text]:focus, textarea:focus, select:focus{ outline:none; border-color
 .dev-log .fall{ color:var(--danger); font-weight:700; }
 .dev-log .speech{ color:var(--success); }
 .dev-log .emo{ color:var(--accent); }
+
+/* ---- 리포트: 대화 내용 통계 카드 (report-stats.js) ---- */
+#reportStatsCard .rs-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+#reportStatsCard .rs-head h3{ margin:0; }
+#reportStatsCard .rs-note{ font-size:12px; line-height:1.5; margin:6px 0 12px; }
+.rs-msg{ font-size:13px; margin:8px 0; }
+.rs-msg.rs-error{ color:var(--danger); }
+.rs-summary{ padding:12px 14px; border-radius:14px; background:#f0f1fd; margin-bottom:14px; }
+.rs-summary-main{ font-weight:700; font-size:15px; }
+.rs-sub{ font-size:12px; margin-top:4px; }
+.rs-sec{ margin-bottom:14px; }
+.rs-sec-title{ margin:0 0 8px; font-size:13px; color:var(--fg); }
+.rs-sec-note{ font-weight:400; font-size:11px; color:var(--muted); margin-left:6px; }
+.rs-grid{ display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:4px 18px; }
+@media (max-width:640px){ .rs-grid{ grid-template-columns:1fr; } }
+.rs-list{ list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px; font-size:13px; }
+.rs-list li{ display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 12px; border-radius:12px; background:#f0f1fd; }
+.rs-list li.rs-zero{ color:var(--muted); background:#f6f6fd; }
+.rs-list li.rs-zero b{ font-weight:400; }
+.rs-right{ display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.rs-badge{ font-size:11px; padding:2px 8px; }
+.rs-none{ font-size:13px; margin:0; }
+.rs-day{ display:grid; grid-template-columns:76px 1fr 44px; align-items:center; gap:8px; font-size:12px; margin-bottom:6px; }
+.rs-day-label{ color:var(--muted); }
+.rs-day-track{ height:10px; }
+.rs-day-fill{ background:var(--accent-2); }
+.rs-day-count{ text-align:right; }
+.rs-want{ margin-bottom:8px; }
+.rs-want-label{ font-size:12px; color:var(--muted); margin-bottom:4px; }
+.rs-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+.rs-chip{ font-size:12px; padding:4px 10px; border-radius:999px; background:#eef0fc; }

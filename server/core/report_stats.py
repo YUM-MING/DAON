@@ -97,6 +97,14 @@ def period(days: int, now: float) -> tuple[str, str, float, float, list[str]]:
     return names[0], names[-1], first.timestamp(), (today + timedelta(days=1)).timestamp(), names
 
 
+def previous_period(days: int, now: float) -> tuple[str, str, float, float, list[str]]:
+    """period() 바로 앞의 같은 길이 기간 (직전 기간 비교용)"""
+    today = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
+    first = today - timedelta(days=2 * days - 1)
+    names = [(first + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+    return names[0], names[-1], first.timestamp(), (first + timedelta(days=days)).timestamp(), names
+
+
 # ---------- 원하는 것 추출 ----------
 def _strip_particle(word: str) -> str:
     for p in PARTICLES:
@@ -172,12 +180,39 @@ def extract_wants(text: str, sig) -> dict:
 
 
 # ---------- 집계 ----------
+NEG_EMOTION_KINDS = ("lonely", "sad", "anxious", "lethargic", "grief")   # daily.negative_emotion_mentions 에 세는 말씀 감정
+
+
 def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None) -> dict:
-    analyze = analyze or analyzer()
+    """GET /report/stats 응답 (형식 고정 — daily 등 내부 집계는 넣지 않는다)"""
     d_from, d_to, start, end, names = period(days, now)
+    a = aggregate(db, hid, start, end, names, analyze)
+    sym_list = sorted(({**s, "days": len(s["days"])} for s in a["symptoms"].values()),
+                      key=lambda s: (-s["count"], s["part"] or "", s["kind"]))
+    return {
+        "days": days, "from": d_from, "to": d_to,
+        "analyzed": a["analyzed"],
+        "conversations": [a["per_day"][d] for d in names],
+        "sleep": a["sleep"], "meal": a["meal"], "symptoms": sym_list,
+        "emotion_text": dict(a["emotion"]), "topics": dict(a["topics"]),
+        "wants": {cat: [{"item": i, "count": n} for i, n in a["wants"][cat].most_common(TOP_N)]
+                  for cat in ("food", "like_food", "place", "person")},
+        "basis": "user_said", "version": VERSION, "skipped": a["skipped"],
+    }
+
+
+def aggregate(db, hid: int, start: float, end: float, names: list[str], analyze: Callable | None = None) -> dict:
+    """[start, end) 구간 내부 집계. compute()(stats) 와 report_insights 가 같이 쓴다.
+    symptoms 값의 days 는 날짜 집합(set), daily 는 날짜별 언급 수(발화·카테고리당 1회),
+    health_mentions 는 수면·식사·증상·감정(positive 제외) 중 하나라도 있었던 분석 발화 수."""
+    analyze = analyze or analyzer()
     rows = db.report_dialogue_events(hid, start, end, FETCH_LIMIT)
 
     per_day = {d: {"day": d, "user_msgs": 0, "robot_msgs": 0} for d in names}
+    daily = {d: {"day": d, "user_msgs": 0, "sleep_bad": 0, "tired": 0, "meal_not": 0, "symptom_mentions": 0,
+                 "negative_emotion_mentions": 0} for d in names}
+    analyzed_days: set = set()
+    health_mentions = 0
     skipped = {"duplicate": 0, "stt_unclear": 0, "recall_question": 0, "analysis_error": 0}
     sleep = {"bad": 0, "good": 0, "tired": 0}
     meal = {"done": 0, "not": 0, "ask": 0, "memory": 0}
@@ -205,6 +240,7 @@ def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None
             continue
         last_user = (norm, r["ts"])
         per_day[day]["user_msgs"] += 1
+        daily[day]["user_msgs"] += 1
         try:
             sig = analyze(text)
             if sig.stt_unclear:
@@ -218,6 +254,16 @@ def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None
             skipped["analysis_error"] += 1
             continue
         analyzed += 1
+        analyzed_days.add(day)
+        dd = daily[day]
+        dd["sleep_bad"] += "bad" in found["sleep"]
+        dd["tired"] += "tired" in found["sleep"]
+        dd["meal_not"] += "not" in found["meal"]
+        dd["symptom_mentions"] += bool(found["symptoms"])
+        dd["negative_emotion_mentions"] += any(k in found["emotion"] for k in NEG_EMOTION_KINDS)
+        if (found["sleep"] or found["meal"] & {"done", "not", "ask"} or found["symptoms"]
+                or found["emotion"] - {"positive"}):
+            health_mentions += 1
         for k in found["sleep"]:
             sleep[k] += 1
         for k in found["meal"]:
@@ -232,18 +278,9 @@ def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None
         for cat, item in found["wants"].items():
             wants[cat][item] += 1
 
-    sym_list = sorted(({**s, "days": len(s["days"])} for s in symptoms.values()),
-                      key=lambda s: (-s["count"], s["part"] or "", s["kind"]))
-    return {
-        "days": days, "from": d_from, "to": d_to,
-        "analyzed": analyzed,
-        "conversations": [per_day[d] for d in names],
-        "sleep": sleep, "meal": meal, "symptoms": sym_list,
-        "emotion_text": dict(emotion), "topics": dict(topics),
-        "wants": {cat: [{"item": i, "count": n} for i, n in wants[cat].most_common(TOP_N)]
-                  for cat in ("food", "like_food", "place", "person")},
-        "basis": "user_said", "version": VERSION, "skipped": skipped,
-    }
+    return {"per_day": per_day, "daily": [daily[d] for d in names], "skipped": skipped, "analyzed": analyzed,
+            "analyzed_days": len(analyzed_days), "health_mentions": health_mentions,
+            "sleep": sleep, "meal": meal, "symptoms": symptoms, "emotion": emotion, "topics": topics, "wants": wants}
 
 
 def _collect(sig, text: str) -> dict:

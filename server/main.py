@@ -37,7 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from server import config as cfgmod
 from server.auth import COOKIE, current_user, ensure_demo_account, require_member, require_user
 from server.core.home import HomeManager
-from server.core import report_stats
+from server.core import report_insights, report_stats
 from server.core.summarizer import Summarizer, day_bounds
 from server.db import DB
 
@@ -265,6 +265,17 @@ def create_app(config: dict) -> FastAPI:
         except ValueError as e:
             raise HTTPException(400, str(e))
         return await asyncio.to_thread(report_stats.compute, db, home_id, n, time.time())
+
+    @app.get("/api/homes/{home_id}/report/insights")
+    async def home_report_insights(request: Request, home_id: int, days: str = "7"):
+        """이번 주 상태 요약: 규칙 기반 주의 신호 (진단·예측 아님, LLM 호출 없음). 최근 days 일과 직전 같은 길이 기간 비교.
+        days 검증·인증·오류 형식은 report/stats 와 같다. 알림은 alerts 사실 정보로만 (신호·종합 단계에 넣지 않음)."""
+        require_member(request, home_id)
+        try:
+            n = report_stats.parse_days(days)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return await asyncio.to_thread(report_insights.compute, db, home_id, n, time.time())
 
     @app.post("/api/homes/{home_id}/report/summary")
     async def home_report_summary(request: Request, home_id: int, body: dict = Body(default={})):

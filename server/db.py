@@ -291,3 +291,18 @@ class DB:
             d["data"] = json.loads(d["data"] or "{}")
             out.append(d)
         return out
+
+    # ---------------- 리포트 '이번 주 상태 요약' (report_insights) ----------------
+    def report_events_between(self, hid: int, type: str, start: float, end: float, limit: int = 20000) -> list[dict]:
+        """[start, end) 구간의 한 종류 이벤트(예: emotion)를 오래된 것부터 (ts, data)."""
+        out = []
+        for r in self._q("SELECT ts, data FROM events WHERE home_id=? AND type=? AND ts>=? AND ts<? "
+                         "ORDER BY ts ASC, id ASC LIMIT ?", hid, type, start, end, limit):
+            out.append({"ts": r["ts"], "data": json.loads(r["data"] or "{}")})
+        return out
+
+    def report_alerts_between(self, hid: int, start: float, end: float) -> list[dict]:
+        """[start, end) 에 생성된 알림의 시각과 cause(대화 모듈 비상 사유 코드)만. 오래된 것부터."""
+        return [{"ts": r["created_ts"], "cause": r["cause"] or ""} for r in
+                self._q("SELECT created_ts, cause FROM alerts WHERE home_id=? AND created_ts>=? AND created_ts<? "
+                        "ORDER BY created_ts ASC, id ASC", hid, start, end)]

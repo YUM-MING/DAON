@@ -51,7 +51,10 @@ class Coordinator:
         self.audio_fall_at: float | None = None
         self.audio_fall_conf = 0.0
         self.fall_episode_start: float | None = None
+        self.safety_check_start: float | None = None
         self.radar_motion: str | None = None
+        self.radar_distance_cm: int | None = None
+        self._last_radar_at: float | None = None
         self.vision_motion: str | None = None
         self.fused = {"pred": "no_fall", "conf": 0.0}
         self.dialogue_state = "NORMAL"
@@ -192,9 +195,11 @@ class Coordinator:
             self._thinking_until = self.clock() + 3.0
 
     def on_radar(self, ev) -> None:
-        self.radar_motion = ev.motion
-        if self.device["radar"] in ("starting",):
+        self.radar_motion, self.radar_distance_cm = ev.motion, ev.get("distance_cm")
+        self._last_radar_at = self.clock()
+        if self.device["radar"] in ("starting", "stale", "error"):     # 값이 다시 들어오면 복구
             self.device["radar"] = "ok"
+            self._push_device()
 
     def on_motion(self, ev) -> None:
         self.vision_motion = ev.motion
@@ -203,7 +208,13 @@ class Coordinator:
         for k in ("camera", "mic", "radar"):
             if k in ev.data:
                 self.device[k] = ev.data[k]
+        if ev.data.get("radar") in ("stale", "error"):
+            self._drop_radar()
         self._push_device()
+
+    def _drop_radar(self) -> None:
+        """레이더가 끊기면 마지막 값을 버린다 — 오래된 '정지'가 알림 근거·평가 로그에 남지 않게 (비전 motion 이 대신한다)."""
+        self.radar_motion = self.radar_distance_cm = None
 
     def on_client(self, ev) -> None:
         if ev.get("role") == "robot" and ev.get("connected"):
@@ -213,7 +224,12 @@ class Coordinator:
     # ---------------- 대화 모듈 출력 ----------------
     def on_dialogue_output(self, ev) -> None:
         d = ev.data
+        prev = self.dialogue_state
         self.dialogue_state = d.get("state", self.dialogue_state)
+        if self.dialogue_state == "SAFETY_CHECK" and prev != "SAFETY_CHECK":
+            self.safety_check_start = ev.ts          # 안전 확인 시작 (소리로만 시작된 확인의 알림 근거 기준 시각)
+        elif self.dialogue_state != "SAFETY_CHECK" and not d.get("emergency_active"):
+            self.safety_check_start = None
         a = d.get("assessment") or {}
         if "risk_score" in a:
             self.risk_score = int(a["risk_score"])
@@ -330,6 +346,10 @@ class Coordinator:
                 and now - self._last_pose_at > 5):
             self.device["camera"] = "stale"
             changed = True
+        if self._last_radar_at and self.device["radar"] == "ok" and now - self._last_radar_at > 5:
+            self.device["radar"] = "stale"          # 워커가 말없이 멈춘 경우 (워커 자체 감지는 3초, 여기는 안전망)
+            self._drop_radar()
+            changed = True
         if changed or now - self._last_device_push >= 5:
             self._push_device()
 
@@ -371,10 +391,14 @@ class Coordinator:
     def _radar_pred(self) -> dict:
         m = self.radar_motion
         if m == "still":
-            return {"pred": "uncertain", "conf": 0.5, "motion": m}
-        if m == "moving":
-            return {"pred": "no_fall", "conf": 0.7, "motion": m}
-        return {"pred": "uncertain", "conf": 0.0, "motion": m or "unknown"}
+            out = {"pred": "uncertain", "conf": 0.5, "motion": m}
+        elif m == "moving":
+            out = {"pred": "no_fall", "conf": 0.7, "motion": m}
+        else:
+            out = {"pred": "uncertain", "conf": 0.0, "motion": m or "unknown"}
+        if self.radar_distance_cm:
+            out["distance_cm"] = self.radar_distance_cm
+        return out
 
     def _sensor_labels(self, now: float) -> dict:
         """alert_created 의 판정 근거: 평가 로그와 달리 '이번 낙상 에피소드 안에' 낙상음이 있었으면 audio=fall.
@@ -383,8 +407,9 @@ class Coordinator:
         if radar == "unknown" and self.vision_motion:
             radar = {"still": "no_motion", "moving": "motion"}[self.vision_motion] + "(camera)"
         audio = self._audio_pred(now)["pred"]
-        if (self.audio_fall_at is not None and self.fall_episode_start is not None
-                and self.audio_fall_at >= self.fall_episode_start - 5.0):
+        # 에피소드 시작 = 포즈 낙상 시작 또는 안전 확인 시작 중 이른 쪽 (화면 밖 낙상은 포즈 없이 소리 + 레이더로 확인이 시작된다)
+        starts = [t for t in (self.fall_episode_start, self.safety_check_start) if t is not None]
+        if self.audio_fall_at is not None and starts and self.audio_fall_at >= min(starts) - 5.0:
             audio = "fall"
         return {"pose": self.pose["pred"], "audio": audio, "radar": radar}
 

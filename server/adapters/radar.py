@@ -1,7 +1,8 @@
 """레이더 어댑터 (HLK-LD2410B, PC USB-TTL): workers/radar_worker.py 를 띄운다.
 
 레이더는 서버 PC에 꽂히므로 어느 집의 센서인지 config.yaml `radar.home_code` 로 지정한다 (없으면 첫 번째 집).
-담당자 미정 — 통합자가 임시 구현, 실기기 미검증.
+저장소 기본값은 off — 레이더가 꽂힌 PC 만 config.local.yaml 에서 `modules.radar.mode: worker` 로 켠다.
+2026-11-10 실기기(COM3, 펌웨어 V2.44) 수신·서버 연동 확인.
 """
 from __future__ import annotations
 

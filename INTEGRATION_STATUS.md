@@ -80,7 +80,7 @@ python -m pytest server\tests -q      REM 10개 (시나리오 + 계정/DB)
 | 평가 로그·분석 탭 | ✅ | `logs/<집코드>/eval_log.jsonl` |
 | 리포트·이력 | ✅ | SQLite: 감정 변화, 대화 턴, 알림/해제 → 리포트 탭 요일별 감정·최근 대화, 이력 탭 알림 기록 |
 | 기기 상태 | ✅ | 폰 스트림 3초 내 수신이면 ok, 끊기면 stale, 폰 없으면 off |
-| 레이더 | ⏳ | 워커·파서만 작성, 실기기 미검증, 기본 off |
+| 레이더 | ✅ (실기기) | HLK-LD2410B + CP2102, 2026-11-10 실기기 수신·설정 읽기·서버 연동 확인. 낙상 근거가 있을 때 정지 +20 / 움직임 −5 로 안전 점수에 반영. 3초 무수신이면 stale. 저장소 기본 off, 레이더가 꽂힌 PC 만 `config.local.yaml` 에서 worker. **설치 위치에서 정지/움직임 구분 실측은 미완** |
 
 ## 4. 모듈 수정 요청 목록 (담당자별)
 
@@ -112,7 +112,9 @@ python -m pytest server\tests -q      REM 10개 (시나리오 + 계정/DB)
 
 | 질문 | 현재 가정 |
 |---|---|
-| 레이더 드라이버 담당 | 통합자 임시 파서, 실기기 미검증, 기본 off |
+| 레이더 드라이버 담당 | 이유민 (`server/workers/radar_worker.py`, 테스트 `server/tests/test_radar.py`) |
+| 레이더 `none`(사람 없음) 의 지연 | 모듈이 사람이 사라진 뒤 5초(무인 지속 시간, 공장 기본값) 동안 재실로 보고 → 대화 모듈 '화면 이탈'(`sound_exit_window_secs` 5초) 판정과 빠듯함. 줄이려면 `radar_worker.py --set-absent-sec 2` (혜원과 협의 후) |
+| 카메라는 낙상인데 레이더는 `none` | 지금은 '움직임 없음(+20)' 으로 계산. 레이더 감지 범위 밖일 뿐일 수 있음 → 실측 후 결정 |
 | 서버 위치 | 발표 PC + Cloudflare 터널 (주소가 실행마다 바뀜). 고정 주소가 필요하면 Cloudflare 계정 터널 또는 EC2 |
 | TTS | 폰 브라우저 SpeechSynthesis(ko-KR). 품질 부족하면 서버 TTS + 오디오 전송 |
 | 보호자 외부 알림(문자·카톡) | 혜원 모듈 웹훅 채널 + Zapier. `modules/dialogue/.env` 의 `ALERT_WEBHOOK_URL` |
@@ -122,4 +124,4 @@ python -m pytest server\tests -q      REM 10개 (시나리오 + 계정/DB)
 
 1. **실폰 검증**: 터널 주소로 폰 접속 → 카메라·마이크 권한 → 대시보드 기기 상태 ok → 말하기 → 넘어지기. 안 되는 지점의 터미널 로그와 폰 화면 좌하단 전송량 표시를 보고 조정.
 2. **정확도**: 비전 폰 프로파일 재보정 완료(3종 합산 F1 0.78, UR Fall 단독 0.687 → 0.727) / 음성 오탐 2/15(의자 끌기) / 대화 키워드 규칙 / 융합 지연(레이더 또는 비전 motion 으로 15초 보장).
-3. **레이더**: USB-TTL 로 PC 연결 후 `radar.mode: worker`, 포트 지정.
+3. **레이더**: 연결·연동 완료. 남은 것은 설치 위치 실측 — `python server/workers/radar_worker.py --port COM3 --monitor` 로 가만히 앉기 / 누워 있기 / 방 나가기 때 `still`·`moving`·`none` 이 맞게 나오는지 보고, 필요하면 거리 구간별 감도 조정.

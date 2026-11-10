@@ -45,6 +45,10 @@ def load(path: str | Path | None = None, *, mock: bool = False, overrides: dict 
     if p.exists():
         with open(p, encoding="utf-8") as f:
             cfg = _merge(cfg, yaml.safe_load(f) or {})
+    local = p.with_name(p.stem + ".local" + p.suffix)   # config.local.yaml: 이 PC 에만 해당하는 설정 (git 에 올리지 않음)
+    if local.exists():                                  # 예) 레이더가 꽂힌 서버 PC 만 radar.mode: worker
+        with open(local, encoding="utf-8") as f:
+            cfg = _merge(cfg, yaml.safe_load(f) or {})
     if mock:
         for m in ("vision", "audio", "radar"):
             cfg["modules"][m]["mode"] = "mock"

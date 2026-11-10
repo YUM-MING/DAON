@@ -73,7 +73,12 @@
 | `pred` | 낙상 판정 관점: 레이더는 항상 `uncertain` (단독으로 낙상을 말하지 않음) |
 | `detail.motion` | `moving` / `still` / `none` (`none` = 사람 없음) |
 | `detail.source` | `radar` / `vision` |
-| `detail.distance_cm` | 레이더만 |
+| `detail.distance_cm` | 레이더만. 움직임이면 움직임 표적 거리, 정지면 정지 표적 거리 (`none` 은 0) |
+| `detail.mov_energy` / `detail.st_energy` | 레이더만. 움직임·정지 에너지 0~100 (보고 주기 안의 최댓값) — 지금은 로그·대시보드용, 융합에는 미사용 |
+
+레이더(HLK-LD2410B)는 0.5초 동안의 프레임(약 5개)을 다수결로 줄여 한 건을 낸다. `none` 은 사람이 사라지고
+모듈의 '무인 지속 시간'(기본 5초)이 지난 뒤에야 나온다. 3초 넘게 프레임이 없으면 기기 상태 `radar: stale`,
+그때부터는 비전 `motion` 이 대신한다.
 
 대화 입력 `motion` 값은 `detail.motion` 그대로. 레이더와 비전이 동시에 있으면 **레이더 우선** (최근 5초 내 값이 있을 때).
 

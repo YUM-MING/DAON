@@ -24,6 +24,8 @@ events.jsonl
 *.log
 # 서버 런타임 로그 (eval_log.jsonl, alerts.jsonl)
 logs/
+# PC 별 설정 (레이더 포트 등) — config.yaml 위에 덮어쓴다
+config.local.yaml
 
 # 에디터
 .vscode/

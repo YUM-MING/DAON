@@ -70,7 +70,15 @@ SCREAM_MAX = 12                     # 이보다 긴 문자열은 비명 단독�
 MOAN = re.compile(r"(?:으*윽|끄+윽|끙)+")
 MOAN_MAX = 8
 # --- 작은 일상 의도 (부르기·마이크 확인·다시 말해 달라기): 문장 전체가 이 말일 때만 ---
-CALL_WORDS = {"야", "저기요", "저기", "다온아", "다온이", "다온", "여보세요", "얘야", "이봐"}
+CALL_WORDS = {"야", "저기요", "저기", "다온아", "다온이", "다온", "다온이야", "여보세요", "얘야", "이봐"}
+# 호출어 뒤의 '거기 있니?' 같은 확인 ("다온아 거기 있니"): 부르는 말로 본다 (호출어 없이 단독이면 해당 없음)
+PRESENCE_ASK = {"거기있니", "거기있어", "거기있나", "거기있지", "있니", "있어", "어디있니", "어디있어"}
+# 호출어 '다온아'의 STT 변형: 발화 전체가 이 낱말일 때만 (6자 이내의 짧은 발화. 긴 문장 속 낱말은 해당 없음)
+CALL_STT_VARIANTS = {"다오나", "다온나", "다오냐", "다온냐"}
+# 직전 응답에 대한 지적 ("대답이 좀 엉뚱하네", "무슨 소리야"): 사과하고 다시 말씀해 달라고 한다 (안전 확인 중에는 쓰지 않음)
+COMPLAINT_STRONG = ("엉뚱", "무슨소리", "무슨말이야", "동문서답", "딴소리", "말이안맞", "잘못알아들었", "못알아듣네")
+COMPLAINT_WEAK = ("그게아니라", "그게아니고", "그말이아니")          # 짧게 이 말만 할 때만 (뒤에 내용이 이어지면 그 내용을 듣는다)
+COMPLAINT_NOT = ("밖에", "저게", "저거", "이게무슨소리", "쿵", "들려", "들리")   # 실제 소리를 묻는 말 ("밖에서 무슨 소리야?")
 CALL_PREFIXES = ("다온아", "다온이", "저기요", "야")
 MIC_CHECK = {"들려", "들려요", "들리니", "들리나", "들리냐", "들리세요", "들리지", "잘들려", "잘들려요",
              "내말들려", "내말들리니", "내말잘들려", "내말들리지", "내목소리들려", "내목소리잘들려", "내목소리들리니",
@@ -104,6 +112,10 @@ PAIN_SEVERE = ("너무", "많이", "심하게", "심해", "심한", "엄청", "�
 # --- 회상 질문 vs 재호소 ---
 # "아프다고 했잖아"처럼 이미 말했다며 다시 호소하는 말 (회상 질문 아님)
 INSIST = ("잖아", "다니까", "다니깐")
+# 지난 대화의 방문 소식을 묻는 회상 ("내가 누가 놀러온다고 했지?", "누가 온다고 했더라"): 회상 질문 판정(recall_question)은 그대로 두고 덧붙인다
+RECALL_VISIT_RE = re.compile(r"놀러|온다고|오기로|온대|오신다")
+# 내가 한 말을 묻는 질문 ("내가 뭐라고 했지", "내가 아까 뭐라고 했더라"). '뭐라고?'(로봇 말을 다시 해 달라)와 구분해 '내가'가 있을 때만
+RECALL_SAID_RE = re.compile(r"내가(?:아까|방금|조금전에)?뭐라고(?:했지|했더라|했나|했어|그랬지|했었지|했었더라)")
 RECALL_ENDS = ("했지", "했나", "했었나", "했었지", "했더라", "했었더라", "했던가", "그랬지", "그랬나", "그랬었나",
                "말했지", "말했나", "그랬더라", "그랬었지", "그랬었더라", "했는지", "그랬는지", "말했더라")
 RECALL_WH = ("어디", "뭐가", "무엇이", "무슨", "어느")
@@ -256,17 +268,97 @@ TIRED = ("피곤", "지쳤", "지친", "지쳐", "기운이없", "기운없", "�
 DISCOMFORT = ("쑤셔", "쑤시", "저려", "저리", "결려", "결리", "뻐근", "시려", "시리", "욱신")
 BOREDOM = ("심심", "할일없", "지루")
 WAIT = ("잠깐", "잠시", "기다려")
+# 자리 비움 중 '돌아온다'는 뜻이 있는 말만 ("다녀올게", "갔다 올께", "금방 올게요"). "가야겠다", "가볼게"처럼 돌아온다는
+# 뜻이 없는 말은 넣지 않는다. 건강 화제(병원 등)가 함께 있으면 쓰지 않는다 (analyze에서 확인)
+AWAY_RE = re.compile(r"(?:다녀|갔다|금방)(?:올게|올께|오께)")
 INTENSE = ("너무", "정말", "진짜", "많이", "죽겠", "견디기", "계속")
 OK_TOKENS = {"응", "네", "예", "그래", "그럼", "살아있어"}   # 단어 단위로만 ("이상하네"의 "네" 오탐 방지)
 TOPICS = {
     "lonely": ("외로", "외롭", "쓸쓸", "혼자", "허전", "아무도없", "사람이없"),
-    "family": ("아들", "딸", "손주", "손자", "손녀", "가족", "며느리", "사위", "자식", "보고싶"),
+    "family": ("아들", "딸", "손주", "손자", "손녀", "가족", "며느리", "사위", "자식", "애들", "아이들", "자녀", "보고싶"),
     "health": ("아프", "아파", "허리", "무릎", "다리", "쑤시", "쑤셔", "저려", "약먹", "병원", "혈압", "당뇨"),
     "sleep": ("잠이", "잠을", "잠자", "못잤", "불면", "뒤척"),
     "weather": ("날씨", "추워", "더워", "비가", "눈이"),
 }
 
-VISIT_RE = re.compile(r"놀러(?:오|온|와|왔)")      # 놀러 온다는 소식 (택배·비처럼 사람이 아닌 '오다'는 해당 없음)
+VISIT_RE = re.compile(r"놀러(?:오|온|와|왔|운)")   # 놀러 온다는 소식 (택배·비처럼 사람이 아닌 '오다'는 해당 없음). '놀러운데'는 STT 변형
+# 가족 문맥: 가족 낱말이 함께 있을 때만 쓴다 ('보고싶'은 사람이 아니므로 뺀다)
+FAMILY_WORDS = tuple(k for k in TOPICS["family"] if k != "보고싶")
+# 연락이 뜸하다는 말: 전화·연락 + (잘) 안 와·안 오·안 해·없·뜸 ("애들이 바빠서 전화도 잘 안 와", "자식들이 연락이 없어")
+DISTANCE_RE = re.compile(r"(?:전화|연락)(?:도|이|가|을|를|은|는)?(?:잘|통|영)?(?:안와|안오|안해|안하|없|뜸)")
+# 가족에게 무언가 해 주려는 계획 ("손녀한테 김치찌개 끓여 주려고", "아들 줄 거야", "딸 해줄 거야")
+FOR_FAMILY_RE = re.compile(r"(?:주려|줄려|주려구|줄라고|줄거|해주려|해줄)")
+# 먹은 음식 이름 (식사를 마쳤다는 말에서만 쓴다). 두 글자 이상은 낱말 끝이 일치하면 음식으로 본다 ("된장찌개", "김치볶음밥")
+DISH_WORDS = ("찌개", "볶음", "구이", "조림", "무침", "나물", "반찬", "김치", "국수", "라면", "냉면", "만두", "비빔밥",
+              "김밥", "볶음밥", "고기", "생선", "부침개", "떡볶이", "잡채", "불고기", "청국장", "된장")
+# 한 글자 음식(죽·국·탕·떡)은 조사를 뗀 낱말이 그 글자이거나 그 글자로 끝날 때만 (낱말 경계). 음식이 아닌 '-국' 낱말은 뺀다
+DISH_ONE = ("죽", "국", "탕", "떡")
+NOT_DISH = {"한국", "중국", "미국", "외국", "전국", "결국", "약국", "우체국", "천국", "방송국", "왕국", "시국", "본국",
+            "타국", "영국", "제국", "당국", "입국", "출국", "귀국", "목욕탕", "온탕", "냉탕", "사우나탕"}
+DISH_PARTICLES = ("이랑", "하고", "으로", "을", "를", "이", "가", "은", "는", "도", "만", "랑", "로", "에")
+EAT_VERBS = ("먹", "끓여", "끓였", "쒀", "쑤어", "해먹", "해 먹", "만들어")   # 한 글자 음식만 단독으로 왔을 때 바로 뒤 낱말
+
+
+def _meal_item(tokens: list) -> bool:
+    """먹은 음식을 말했는지 (낱말 단위로 본다: '죽겠다'·'한국'처럼 다른 낱말 속의 글자는 음식이 아니다).
+    한 글자 음식이 낱말 전체일 때('죽을', '국')는 바로 뒤 낱말이 먹다·끓이다일 때만 ('죽을 뻔했어'는 음식이 아니다)"""
+    for i, tok in enumerate(tokens):
+        w = tok
+        for p in DISH_PARTICLES:
+            if w.endswith(p) and len(w) > len(p):
+                w = w[: -len(p)]
+                break
+        if w in NOT_DISH or tok in NOT_DISH:
+            continue
+        if any(w.endswith(d) for d in DISH_WORDS):
+            return True
+        if len(w) >= 2 and any(w.endswith(d) for d in DISH_ONE):          # 호박죽·된장국·갈비탕·쑥떡
+            return True
+        if w in DISH_ONE and i + 1 < len(tokens) and tokens[i + 1].startswith(EAT_VERBS):
+            return True
+    return False
+
+
+# 앞으로 해 주려는 준비 ("오면 만들어 줘야지", "해 줘야지", "준비해야지", "만들어 줄 거야"): 대상(가족 낱말) 없이 와도 표시만 한다.
+# 가족 화제 공감으로 받을지는 엔진이 직전 턴의 화제로 정한다
+PLAN_PREP_RE = re.compile(r"(?:만들어|해|끓여|차려|사)(?:줘야|줘야지|줘야겠|줄거|주려|줄려)|준비(?:해야|할거|하려)")
+
+# ───────── STT 친족어 변형 보정 (보수적) ─────────
+# 잘못 들린 친족어 → 원래 낱말. 조사가 붙은 낱말만 본다 ("소녀 시절"처럼 조사 없이 쓰인 낱말은 보정하지 않는다)
+KIN_STT = {"소녀": "손녀", "솔녀": "손녀", "손너": "손녀", "손여": "손녀", "손쥬": "손주", "손짜": "손자"}
+KIN_PARTICLES = ("한테", "에게", "이랑", "하고", "가", "이", "는", "은", "를", "을", "도", "랑", "네", "")
+KIN_VISIT_CUES = ("놀러", "온대", "온다", "온데", "운데", "오기로", "오면", "주말")         # 방문
+KIN_CARE_CUES = ("한테", "에게", "끓여", "만들어", "해주", "주려", "줄려", "해줄", "줄거", "챙겨")   # 돌봄·음식 준비
+KIN_BLOCK = ("영화", "드라마", "만화", "노래", "책", "소녀상", "시절", "소설")              # 다른 뜻의 '소녀'가 분명한 문맥
+SONI_FOOD_CUES = ("끓여", "만들어", "해주", "주려", "줄려", "해줄", "요리", "반찬", "찌개", "밥")
+
+
+def correct_kin_stt(text: str, family_context: bool) -> tuple:
+    """친족어 STT 변형 보정 → (보정한 문장, [(원래 낱말, 바꾼 낱말)]). 문맥이 모자라면 원문 그대로.
+    family_context: 직전 턴의 화제가 가족이었는지 (엔진이 판단해 넘긴다)
+    - 소녀·솔녀·손너·손여 등: {가족 문맥, 방문 단서, 돌봄·음식 준비 단서} 중 둘 이상이 함께 있을 때만
+      (가족 문맥 없이 '주말' + '놀러'만 있으면 방문 단서 하나뿐이라 보정하지 않는다)
+    - '손이'(일반 문장에 흔함): 가족 문맥이 이어지는 중이고 '손이한테/손이에게' + 음식 준비 단서가 함께 있을 때만"""
+    if not text:
+        return text, []
+    compact = re.sub(r"\s+", "", text)
+    if any(b in compact for b in KIN_BLOCK):
+        return text, []
+    groups = int(family_context) + int(any(c in compact for c in KIN_VISIT_CUES)) + int(any(c in compact for c in KIN_CARE_CUES))
+    fixes = []
+
+    def repl(m):
+        word = m.group(0)
+        for wrong, right in KIN_STT.items():
+            if word.startswith(wrong) and word[len(wrong):] in KIN_PARTICLES and word[len(wrong):] and groups >= 2:
+                fixes.append((wrong, right))
+                return right + word[len(wrong):]
+        if (word in ("손이한테", "손이에게") and family_context and any(c in compact for c in SONI_FOOD_CUES)):
+            fixes.append(("손이", "손녀"))
+            return "손녀" + word[2:]
+        return word
+    out = re.sub(r"[가-힣]+", repl, text)
+    return out, fixes
 
 # --- 가족·인물 관계 (LLM 응답의 근거 검사용: 어르신이 직접 말한 관계만 로봇이 쓸 수 있다) ---
 # 관계: (어르신 발화에서 인정하는 표현, 로봇 문장에서 찾는 표현). 낱말 앞부분 일치 ("딸이", "따님께서", "손녀딸")
@@ -346,6 +438,8 @@ class TextSignals:
     pain_soft: bool = False         # 위험 신호 없는 일상 통증 ("머리가 좀 아프네", "허리 아파서 죽겠네")
     pain_repeat: bool = False       # 같은 증상 반복·재호소로 일상 통증에서 제외됨 (엔진이 문맥을 보고 설정)
     recall_question: bool = False   # "내가 아까 어디가 아프다고 했지?"처럼 지난 말을 묻는 질문
+    recall_visit: bool = False      # 회상 질문 중 방문 소식을 묻는 것 ("내가 누가 놀러온다고 했지?")
+    recall_said: bool = False       # 내가 한 말을 묻는 질문 ("내가 뭐라고 했지") — recall_question과 별개
     recall_symptom: bool = False    # 회상 질문이 증상에 관한 것
     insist: bool = False            # "아프다고 했잖아"처럼 이미 말했다며 다시 호소
     symptom_said: str = ""          # 이번 발화의 증상 표현 ("아프다고", "쑤신다고"), 없으면 ""
@@ -372,6 +466,11 @@ class TextSignals:
     emotion_no_redirect: bool = False   # 그리움·사별·마음 아픔: 공감·경청만 (환기 제안 대상 아님)
     expect: bool = False            # "기대돼", "설레" (긍정 요소 기록용, positive 판정은 바꾸지 않음)
     listen_request: bool = False    # "그냥 들어줘", "얘기하고 싶어": 경청을 원하는 말
+    family_distance: bool = False   # 가족 연락이 뜸하다는 말 ("애들이 바빠서 전화도 잘 안 와")
+    family_plan: bool = False       # 가족에게 무언가 해 주려는 계획 ("손녀한테 김치찌개 끓여 주려고")
+    meal_item: bool = False         # 식사를 마쳤다며 먹은 음식을 말함 ("된장찌개 끓여 먹었어") — meal_state가 done일 때만
+    plan_prep: bool = False         # 앞으로 해 주려는 준비 ("오면 만들어 줘야지") — 가족 화제로 받을지는 엔진이 문맥으로 정함
+    complaint: bool = False         # 직전 응답에 대한 지적 ("대답이 좀 엉뚱하네") — small_intent와 별개 (안전 확인 경로에 영향 없음)
     visit: bool = False             # 누가 놀러 온다·왔다는 소식 ("우리 선녀가 놀러 오기로 했어") — 누구인지는 짐작하지 않는다
     permission_ask: bool = False    # 행동을 해도 되는지 묻는 말 ("걸러도 괜찮지 않을까?") — 위험 호소도, 괜찮다는 대답도 아님
     skip_ask: bool = False          # 거르기·건너뛰기를 해도 되는지 묻는 말 ('약'이 없어도. 직전이 약 이야기면 복약 질문)
@@ -490,14 +589,25 @@ def _stt_unclear(tokens, core: str) -> str:
     return ""
 
 
+def _complaint(core: str) -> bool:
+    """직전 응답에 대한 지적인지 (내용이 길게 이어지면 지적이 아니라 그 내용을 듣는다)"""
+    if any(k in core for k in COMPLAINT_NOT):
+        return False
+    if len(core) <= 20 and any(k in core for k in COMPLAINT_STRONG):
+        return True
+    return len(core) <= 8 and any(k in core for k in COMPLAINT_WEAK)
+
+
 def _small_intent(core: str) -> str:
-    if core in CALL_WORDS:
+    if core in CALL_WORDS or (len(core) <= 6 and core in CALL_STT_VARIANTS):
         return "call"
     rest = core
     for p in CALL_PREFIXES:                       # "다온아 들려?" → "들려"
         if rest.startswith(p) and len(rest) > len(p):
             rest = rest[len(p):]
             break
+    if rest != core and rest in PRESENCE_ASK:
+        return "call"
     if rest in MIC_CHECK or MIC_ASK.fullmatch(rest):
         return "mic_bare" if rest in BARE_HEAR else "mic"
     if rest in REPEAT_ASK:
@@ -885,9 +995,13 @@ def analyze(text: str) -> TextSignals:
         about_ai=any(k in compact for k in ABOUT_AI) and not any(k in compact for k in OWN_NAME),
         meal=any(k in compact for k in MEAL),
         boredom=any(k in compact for k in BOREDOM),
-        wait=any(k in compact for k in WAIT), denies_negative=denies,
+        wait=any(k in compact for k in WAIT) or (bool(AWAY_RE.search(compact))
+                                                 and not any(k in compact for k in TOPICS["health"])),
+        denies_negative=denies,
         topics=[n for n, kws in TOPICS.items() if any(k in emotional_view for k in kws)],   # '마음이 아파'는 건강 화제 아님
         pain_soft=pain_soft, recall_question=recall,
+        recall_visit=recall and bool(RECALL_VISIT_RE.search(compact)),
+        recall_said=bool(RECALL_SAID_RE.search(compact)),
         recall_symptom=recall and (any(k in compact for k in SYMPTOM_STEMS + PAST_SYMPTOM) or "어디" in compact),
         insist=insist, symptom_said=symptom_said,
         symptom_parts=([exclaim_part] if exclaim_part else _body_parts(tokens)) if symptom_said else [],
@@ -903,6 +1017,11 @@ def analyze(text: str) -> TextSignals:
         scream=scream, worsening=worsening, moan=moan, improving=_improving(text) and not worsening,
         permission_ask=bool(permit_spans), skip_ask=_skip_ask(compact, bool(permit_spans)),
         visit=bool(VISIT_RE.search(compact)),
+        family_distance=any(k in compact for k in FAMILY_WORDS) and bool(DISTANCE_RE.search(compact)),
+        family_plan=any(k in compact for k in FAMILY_WORDS) and bool(FOR_FAMILY_RE.search(compact)),
+        meal_item=_meal_state(compact, text) == "done" and _meal_item(tokens),
+        plan_prep=bool(PLAN_PREP_RE.search(compact)),
+        complaint=_complaint(core),
         emotion_kind=("" if _medicine_state(compact, bool(permit_spans))      # 복약 이야기가 먼저 (복약 거부 "귀찮아" 등)
                       else _emotion_kind(compact, distress, self_harm, negative, positive, heartache)),
         emotion_no_redirect=heartache or (any(k in compact for k in MISSING) and any(k in compact for k in DECEASED)),

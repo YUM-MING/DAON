@@ -33,9 +33,11 @@ from llm_client import client_from_env                                       # n
 from llm_chat import (EMOTION_KO, STT_REASK_ALLOWED, LLMRunner, build_prompt,  # noqa: E402
                       check_text as check_llm_text, clean as clean_llm_text, fix_honorifics, fix_name_honorific,
                       grounding_issue, intent_for as llm_intent_for, is_unclear_mark, is_user_question,
+                      kin_quote_issue, plan_tense_issue,
                       question_type, semantic_issue, split_sentences, SYMPTOM_KINDS, trim as trim_llm_text,
                       drop_last_question, drop_questions, repeats_question)
-from text_analyzer import FIRE_KINDS, NEG_EMOTION_KINDS, TextSignals, analyze, relations_in
+from text_analyzer import (FIRE_KINDS, NEG_EMOTION_KINDS, RELATIONS, TextSignals, analyze, correct_kin_stt,  # noqa: E402
+                           relations_in)
 
 __all__ = ["DialogueEngine", "DialogueInput", "DialogueOutput", "Config", "State", "Strategy"]
 
@@ -61,6 +63,13 @@ CONFIRM_YES = {"응", "네", "예", "그래", "맞아", "맞아요", "맞다", "
 CONFIRM_NO = {"아니", "아니요", "아뇨", "아니야", "아니에요", "아냐", "아니오", "틀렸어"}
 MAX_CONFIRM_TRIES = 2          # 개방형 다시 묻기에 내용 없는 대답이 이만큼 이어지면 화제 돌리기
 TOPIC_HOLD_TURNS = 3           # 화제·인물을 말하지 않는 이어지는 말에서 직전 화제·인물을 유지하는 사용자 턴 수
+# 방문 소식 회상 (R1): '놀러' 없이 '온다고/온대/오기로'만 말한 가족 방문도 회상에서는 찾는다 (일반 방문 규칙은 그대로)
+VISIT_COME_RE = re.compile(r"온대|온다고|오기로|온다네|온데")
+VISIT_WHEN = {"다음주": "다음 주에", "이번주": "이번 주에", "주말": "주말에", "토요일": "토요일에", "일요일": "일요일에",
+              "저녁": "저녁에", "오늘": "오늘", "내일": "내일", "모레": "모레", "이따": "이따가"}
+# 가족 낱말 한 마디 (R2): "손녀", "손녀요", "손녀라니까" — 관계 낱말 뒤에 이 말만 붙은 짧은 발화
+FAMILY_WORD_SUFFIXES = ("", "요", "야", "이요", "예", "라고", "라니까", "이라고", "이라니까", "말이야", "말이에요")
+RELATIONS_USER_FORMS = {rel: forms[0] for rel, forms in RELATIONS.items()}
 SHORT_JUST = {"그냥", "그냥요"}  # 짧은 대답 중 '그냥': 더 캐묻지 않는다
 QUESTION_STREAK_LIMIT = 2      # 일상 대화에서 질문으로 끝난 응답이 이만큼 이어지면 다음 응답은 질문으로 끝내지 않는다
 GUESS_NEUTRAL = "guess_neutral"   # 짐작 탈락 중립 문장의 응답 종류 표시 (질문 예산 제외)
@@ -79,7 +88,7 @@ PAIN_REPEAT_MARKS = ("아까도", "아까부터", "계속", "자꾸", "여전히
 # 지난 화제를 꺼내도 되는 일상 응답 (시간·식사·약처럼 답할 내용이 있는 말에는 끼어들지 않는다)
 RECALL_KINDS = {"greeting", "generic", "positive", "family", "health", "sleep", "weather"}
 RECALL_WINDOW = 2              # 세션 첫 2턴 안에서만 지난 화제를 꺼낸다 (아래 답변 턴은 세지 않음)
-INFO_KINDS = {"time", "weather_ask", "abilities", "about_ai", "meal", "meal_done", "meal_not", "meal_ask", "medicine",
+INFO_KINDS = {"time", "weather_ask", "abilities", "about_ai", "meal", "meal_done", "meal_done_item", "meal_not", "meal_ask", "medicine",
               "medicine_missed", "medicine_ask", "medicine_refuse", "date", "date_unknown", "medicine_check"}
 KST = datetime.timezone(datetime.timedelta(hours=9))   # 한국 시간 (서머타임 없음). Windows 기본 환경엔 tz 데이터가 없어 고정 오프셋
 WEEKDAYS_KO = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
@@ -299,6 +308,9 @@ class DialogueEngine:
         self.input_guard_stats: Counter = Counter()          # 입력 방어 횟수 (이유별)
         self.input_guard_log: deque = deque(maxlen=GUARD_LOG_MAX)   # {reason, gap, length, hash} — 원문은 남기지 않는다
         self._resume_hint = None              # 이번 발화가 STT 재질문 뒤의 발화면 직전 화제 (LLM 문맥용)
+        self.inferred_relations: set = set()  # STT 친족어 보정으로만 나온 관계 (확인된 관계와 따로, 응답·LLM 근거로 쓰지 않는다)
+        self._topic_turn = None               # last_topic을 정한 사용자 턴 번호 (직전 턴의 화제인지 판단용)
+        self._user_recall = False             # 직전 사용자 턴이 회상·정정(회상 질문·'내가 뭐라고 했지'·지적)이었는지
         self.ctx = ConversationContext(self.cfg)
         self.state = State.NORMAL
         self.session: Optional[SafetySession] = None
@@ -320,7 +332,9 @@ class DialogueEngine:
     def process(self, inp: DialogueInput) -> DialogueOutput:
         """입력이 있을 때마다 호출. 입력이 없어도 1초 간격으로 빈 입력을 넣어 타이머를 진행시킨다."""
         now = inp.timestamp
-        text = (inp.stt or "").strip()
+        raw_text = (inp.stt or "").strip()
+        # STT 친족어 변형 보정 (보수적): 직전 턴이 가족 화제였는지만 넘긴다. 보정된 관계는 '확인된 관계'로 올리지 않는다
+        text, kin_fixes = correct_kin_stt(raw_text, self._family_context())
         sig = analyze(text)                                   # ① 입력 분석 (상태를 바꾸지 않는 순수 분석)
         guarded = self._input_guard(inp, text, sig)           # 중복·자기 목소리: 어떤 상태도 바꾸기 전에, LLM 대기 취소보다 먼저
         if guarded is not None:
@@ -341,8 +355,12 @@ class DialogueEngine:
             self._track_unclear(sig)
             self.ctx.turn_relations = set()
             if not sig.stt_unclear:                           # 알아들은 발화의 관계만 '확인된 관계'로 (STT 오류 의심은 확정하지 않음)
-                self.ctx.turn_relations = relations_in(text) - self.ctx.confirmed_relations
+                # 어르신이 실제로 말한 낱말(보정 전)의 관계만 확인된 관계로 올린다. STT 보정으로 생긴 관계는 추정으로만 둔다
+                self.ctx.turn_relations = relations_in(raw_text) - self.ctx.confirmed_relations
                 self.ctx.confirmed_relations |= self.ctx.turn_relations
+                if kin_fixes:
+                    self.inferred_relations |= relations_in(text) - relations_in(raw_text) - self.ctx.confirmed_relations
+                self.inferred_relations -= self.ctx.confirmed_relations   # 어르신이 직접 말하면 추정에서 뺀다
             if sig.rescue_like and self.ctx.recent_fall_evidence(now):
                 # 낙상 근거(15초 이내 또는 바닥 자세 지속)와 함께 들린 "알려줘"·"달려줘"는 구조 요청일 수 있다 → 안전 우선
                 sig.distress = "severe"
@@ -457,6 +475,10 @@ class DialogueEngine:
             return answered
         if sig.small_intent:                              # "야", "내 목소리 들려?", "뭐라고?"
             return self._small_intent_reply(sig)
+        if sig.complaint and sig.distress == "none" and not sig.self_harm and not sig.danger_kinds:
+            # 직전 응답에 대한 지적("대답이 좀 엉뚱하네"): 사과하고 다시 말씀해 달라고 한다 (고정 문장, LLM 쓰지 않음)
+            return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "complaint"},
+                               "직전 응답에 대한 지적 → 사과하고 다시 말씀 요청")
         if sig.rescue_unsure:                             # 인용·가정·대상 없는 "구해줘" → 즉시 비상 대신 안전 확인
             sit.evidence.append("'구해줘'가 인용·가정이거나 대상 없이 들림 → 지금 도움이 필요한지 확인")
             return self._start_safety(now, sit, sig, "구조 요청인지 불확실 → 안전 확인", variant="help")
@@ -481,6 +503,8 @@ class DialogueEngine:
         c.probe_streak = 0                                # 다른 응답이 오면 되묻기 연속 횟수 초기화
         topic = self._topic_in_context(sig, sit, topic)   # 화제 없는 이어지는 말("기대돼")은 직전 화제를 잠시 유지
         self._track_focus(sig, sit, self._text)
+        prev_turn, self._topic_turn = self._topic_turn, c.user_turns   # 화제를 정한 턴 (안전 확인 등으로 건너뛴 턴은 남지 않는다)
+        prev_recall, self._user_recall = self._user_recall, bool(sig.recall_question or sig.recall_said or sig.complaint)
         prev_topic, c.last_topic = c.last_topic, topic    # 직전 턴과 같은 화제인지 (이어가기 응답용)
         c.prev_topic = prev_topic
         if (c.last_medicine and sig.skip_ask and not sig.medicine_state
@@ -517,6 +541,13 @@ class DialogueEngine:
                                    "증상 회상 질문 (이번 대화에서 들은 증상 없음 → 지어내지 않음)")
             return self._speak(State.NORMAL, Strategy.SMALL_TALK, {"kind": "recall_symptom", "slots": {"said": said}},
                                "증상 회상 질문 → 이번 대화에서 들은 증상으로 대답")
+        if (sig.recall_visit or sig.recall_said) and sig.distress == "none" and not sig.danger_kinds:
+            recalled = self._recall_visit_reply(sig)         # 방문 소식 회상: 확인된 관계만 부른다 (없으면 기존 처리)
+            if recalled is not None:
+                return recalled
+        followed = self._family_word_follow(prev_topic, prev_turn, prev_recall)
+        if followed is not None:                          # 되물음·회상 뒤의 가족 낱말 한 마디("손녀"): 새 질문 없이 이어받기
+            return followed
         if sit.soft_pain and sig.medicine_state == "check":
             # "아구.. 허리야.. 나 약 먹었나?": 통증 공감 + 복약 여부는 단정하지 않음 (고정 문장, LLM 금지)
             part = sig.symptom_parts[0] if sig.symptom_parts else None
@@ -536,10 +567,17 @@ class DialogueEngine:
 
         if sig.grief:                                     # 고인에 대한 그리움: 일상 응답 대신 그리움을 짚는 공감
             topic = "grief"
-        if not negative and not sig.grief:
+        # 가족 이야기 바로 뒤의 준비 말("오면 만들어 줘야지"): 직전 턴이 가족 화제이고 이번 말이 그 화제에 이어질 때만
+        follow = (sig.plan_prep and not sig.family_plan and topic == "family" and prev_topic == "family"
+                  and prev_turn == c.user_turns - 1)
+        # 뜻이 확정된 텍스트 의도(자리 비움·사실 질문·회상·가족 연락 뜸함·방문·가족 계획·준비 말)는 표정 감정이 덮어쓰지 않는다.
+        # 표정만으로 부정이 된 턴(face_only)에만 해당: 텍스트에 부정 감정이 있으면 기존대로 공감, 뜻이 불명확한 말은 기존 표정 공감 유지
+        definite = self._definite_text_intent(sig, follow)
+        if (not negative or (face_only and definite)) and not sig.grief:
             happy_face = c.last["emotion"] == "happy" and now - c.emotion_ts <= self.cfg.emotion_ttl
-            joy = sig.joy or happy_face             # 기쁨은 화제 응답보다 먼저 함께 기뻐한다
-            kind = self._small_talk_kind(sig, sit, topic, joy, prev_topic)
+            joy = sig.joy or (happy_face and not definite)   # 기쁨은 화제 응답보다 먼저 (밝은 표정은 확정된 의도를 덮지 않는다)
+            family_follow = follow and not joy
+            kind = "family_plan_more" if family_follow else self._small_talk_kind(sig, sit, topic, joy, prev_topic)
             gen_ctx = {"kind": kind, **self._person_slots(kind)}   # 대체 문장(템플릿)에 문맥 인물 (확인된 관계만)
             if kind == "emotion":
                 redirect = self._try_redirect(sig, State.NORMAL, Strategy.SMALL_TALK)
@@ -853,6 +891,82 @@ class DialogueEngine:
             return False
         return is_user_question(self._text)
 
+    @staticmethod
+    def _definite_text_intent(sig: TextSignals, family_follow: bool) -> bool:
+        """뜻이 확정된 텍스트 의도인지: 자리 비움(wait), 사실 질문(시각·날짜·날씨·기능), 지난 대화 회상, 가족 연락 뜸함, 방문 소식,
+        가족에게 해 주려는 계획, 가족 이야기 뒤의 준비 말. (호출·불만은 이 분기보다 앞에서 이미 처리된다)
+        '그래요', '음', '그냥 그래'처럼 뜻이 불명확한 말이나 단순히 일상 발화라는 이유만으로는 해당하지 않는다"""
+        return bool(sig.wait or sig.question or sig.recall_visit or sig.recall_said or sig.family_distance
+                    or sig.visit or sig.family_plan or family_follow)
+
+    def _family_context(self) -> bool:
+        """바로 직전 사용자 턴에서 정한 화제가 가족이었는지 (STT 친족어 보정 문맥). 화제 유지 규칙(TOPIC_HOLD_TURNS·새 이야기면 놓음)을
+        그대로 따르고, 안전 확인 등으로 화제를 정하지 않은 턴이 끼면 이어지지 않은 것으로 본다. 이번 턴 번호는 아직 늘기 전"""
+        return self.ctx.last_topic == "family" and self._topic_turn == self.ctx.user_turns
+
+    def _recent_visit_turn(self, within: Optional[int] = None):
+        """이번 세션 대화 기록(이번 턴 제외)에서 가장 최근의 방문 소식 어르신 발화. within: 최근 사용자 턴 몇 개 안에서만.
+        회상 질문 자체는 방문 소식이 아니다. 저장된 문장은 STT 보정 뒤의 문장 (관계는 확인된 것만 부른다)"""
+        seen = 0
+        for t in reversed(self.ctx.history):
+            if t.role != "user":
+                continue
+            seen += 1
+            if within is not None and seen > within:
+                return None
+            s = analyze(t.text)
+            if s.recall_question or s.recall_said:
+                continue
+            if s.visit or (relations_in(t.text) and VISIT_COME_RE.search(t.text)):
+                return t
+        return None
+
+    def _recall_visit_reply(self, sig: TextSignals) -> Optional[DialogueOutput]:
+        """'내가 누가 놀러온다고 했지?': 기억에 있는 방문 소식으로 답한다. 확인된 관계(어르신이 직접 말한 것)만 호칭으로 쓰고,
+        STT 보정으로 추정한 관계만 있으면 호칭 없이 답한다. '내가 뭐라고 했지'는 최근 3턴 안의 방문 소식일 때만"""
+        c = self.ctx
+        t = self._recent_visit_turn(within=None if sig.recall_visit else TOPIC_HOLD_TURNS)
+        if t is None:
+            return None                                   # 기억에 없음 → 기존 처리
+        rels = sorted(relations_in(t.text) & c.confirmed_relations & set(R.RELATION_HONOR))
+        who = _josa(R.RELATION_HONOR[rels[0]], "이", "가") + " " if len(rels) == 1 else ""
+        when = next((w for w in VISIT_WHEN if w in t.text.replace(" ", "")), None)
+        when_txt = "" if when is None else (VISIT_WHEN[when] + " ")
+        come = "놀러 오신다고" if "놀러" in t.text else "오신다고"
+        if relations_in(t.text):                          # 회상한 내용이 가족 방문: 다음 말이 이어지도록 가족 화제로 둔다
+            c.last_topic = "family"
+            if len(rels) == 1:
+                c.focus_relation, c.focus_age = rels[0], 0
+        return self._speak(State.NORMAL, Strategy.SMALL_TALK,
+                           {"kind": "recall_visit", "slots": {"who": who, "when": when_txt, "come": come}},
+                           "방문 소식 회상 질문 → 대화 기록의 방문 소식으로 대답 (호칭은 확인된 관계만)")
+
+    def _family_word_follow(self, prev_topic, prev_turn, prev_recall) -> Optional[DialogueOutput]:
+        """가족 낱말 한 마디("손녀", "아들이요", "손녀라니까"): 직전 턴이 가족 화제이고, 바로 앞에서 다온이 되물었거나
+        어르신이 회상·정정 중이었을 때만 새 질문 없이 이어받는다. 그 밖에는 None (기존 처리)"""
+        c = self.ctx
+        core = re.sub(r"[^가-힣]", "", self._text)
+        rels = relations_in(core)
+        if len(rels) != 1 or not core:
+            return None
+        rel = next(iter(rels))
+        forms = RELATIONS_USER_FORMS.get(rel, ())
+        if not any(core == f + suf for f in forms for suf in FAMILY_WORD_SUFFIXES):
+            return None
+        last_ai = c.recent_ai(1)
+        asked = bool(last_ai) and last_ai[0].strip().endswith("?")
+        if not (prev_topic == "family" and prev_turn == c.user_turns - 1 and (prev_recall or asked)):
+            return None
+        if rel not in R.RELATION_HONOR:
+            return None
+        honor = R.RELATION_HONOR[rel]
+        visit = self._recent_visit_turn(within=TOPIC_HOLD_TURNS + 1) is not None
+        c.focus_relation, c.focus_age = rel, 0
+        kind = "family_word_visit" if visit else "family_word"
+        return self._speak(State.NORMAL, Strategy.SMALL_TALK,
+                           {"kind": kind, "slots": {"rel": honor, "rel_subj": _josa(honor, "이", "가")}},
+                           "되물음·회상 뒤 가족 낱말 한 마디 → 새 질문 없이 이어받기")
+
     def _topic_in_context(self, sig: TextSignals, sit: Situation, topic: Optional[str]) -> Optional[str]:
         """이번 발화의 화제. 화제가 없고 새 이야기를 꺼내지 않은 이어지는 말이면 직전 화제를 사용자 TOPIC_HOLD_TURNS턴까지 유지.
         새 화제가 나오면 바로 바꾸고, 새 이야기를 꺼내거나 기간이 지나면 놓는다. STT 재질문 뒤에는 resume_topic이 우선"""
@@ -1163,6 +1277,8 @@ class DialogueEngine:
         if sig.about_ai: return "about_ai"
         if sig.question: return {"time": "time", "date": "date", "weather": "weather_ask",
                                  "abilities": "abilities"}[sig.question]
+        if sig.family_plan and not sig.negative:      # 가족에게 무언가 해 주려는 계획: 함께 기뻐한다
+            return "joy_family"
         if joy:                                       # 기쁨 표현·밝은 표정: 화제보다 먼저 기쁨을 받아준다
             return {"family": "joy_family", "health": "joy_health"}.get(topic, "joy")
         if sig.listen_request: return "listen"             # "그냥 들어줘": 화제를 돌리거나 묻지 않고 들을 준비
@@ -1171,6 +1287,8 @@ class DialogueEngine:
         if sig.medicine_state:                              # 누락·거부·복용 판단 질문은 완료 칭찬으로 보내지 않는다
             return "medicine_" + sig.medicine_state
         if sig.medicine: return "medicine"                  # 약 복용은 식사 응답보다 먼저 (식사로 되묻지 않음)
+        if sig.meal_state == "done" and sig.meal_item:      # 무엇을 드셨는지 이미 말함: 다시 묻지 않는다
+            return "meal_done_item"
         if sig.meal_state: return "meal_" + sig.meal_state   # 먹었다는 말을 다시 묻지 않고, 안 먹었으면 가볍게 제안
         if sig.meal_memory: return "meal_memory"            # "옛날에 … 먹었는데": 추억 (방금 식사가 아님)
         if sig.meal: return "meal"
@@ -1179,6 +1297,7 @@ class DialogueEngine:
         if sig.tired: return "tired"                        # 피곤하다는 말은 쉬도록 받아준다
         # 방문 소식은 가족 화제보다 먼저: "손녀가 놀러 온대"도 방문 의도(관계 짐작 금지, 반가움 나누기)로 간다
         if sig.visit: return "visit"
+        if sig.family_distance: return "family_distance"   # 가족 연락이 뜸하다는 말: 허전한 마음을 받아준다 (되묻지 않음)
         if topic in R.SMALL_TALK:
             if topic == prev_topic:                         # 직전 턴과 같은 화제: 처음 꺼내는 말 대신 이어가기
                 return "continue_family" if topic == "family" else "continue"
@@ -1473,6 +1592,7 @@ class DialogueEngine:
         reask = kind in STT_REASK_ALLOWED
         req = self._llm.submit(out, out.response_text, system, messages, reask)
         req.kind, req.grounded = kind, set(c.confirmed_relations)   # 근거 검사는 요청 시점의 확인된 관계로
+        req.user_text = user_text                                   # 계획·미완료 시제 검사용 (이번 어르신 발화)
         # 질문 예산: 제외 대상(STT 재질문 등)이면 None → 질문을 건드리지 않는다
         req.budget = None if reask or self._budget_exempt(out.state, self._last_gen[1], kind) else c.q_streak
         req.listening = req.budget is not None and self._listening   # 경청 모드: 응답에 질문을 남기지 않는다
@@ -1498,8 +1618,9 @@ class DialogueEngine:
                 users = [t.text for t in self.ctx.history if t.role == "user"]
                 cand = trim_llm_text(fix_name_honorific(fix_honorifics(raw), users), prev_q, keep_question=req.reask)
                 # 실제로 말할 문장에 어르신이 말하지 않은 관계·상황이 있으면 쓰지 않는다 (잘려 나간 문장은 말하지 않으므로 제외)
-                why = grounding_issue(cand, req.grounded, req.kind) or check_llm_text(
-                    cand, last[0] if last else None, self.cfg.llm_max_chars, self.cfg.llm_min_hangul, req.reask)
+                why = (grounding_issue(cand, req.grounded, req.kind) or kin_quote_issue(cand)
+                       or plan_tense_issue(cand, getattr(req, "user_text", "")) or check_llm_text(
+                    cand, last[0] if last else None, self.cfg.llm_max_chars, self.cfg.llm_min_hangul, req.reask))
             if why is None and req.listening and "?" in cand:
                 # 경청 모드: 앞·중간·끝 어디에 있든 질문 문장을 모두 뺀다. 질문만 있었으면 고정 평서문(템플릿)으로
                 cand = drop_questions(cand)

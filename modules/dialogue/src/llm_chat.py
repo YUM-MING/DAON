@@ -21,7 +21,7 @@ SMALL_TALK_ALLOWED = {
     "greeting", "thanks", "goodnight", "meal", "meal_done", "meal_not", "meal_ask", "boredom", "positive",
     "joy", "joy_family", "joy_health", "weather", "family", "health", "good_day", "tired", "sleep_bad", "sleep",
     "continue", "continue_family", "generic", "resume_topic", "meal_memory", "visit", "short_yes", "short_no",
-    "emotion",
+    "emotion", "family_distance", "meal_done_item", "family_plan_more",
 }
 SMALL_TALK_FORBIDDEN = {
     "about_ai", "time", "weather_ask", "abilities", "recall", "back_off", "relieved", "improving", "medicine",
@@ -29,6 +29,8 @@ SMALL_TALK_FORBIDDEN = {
     "medicine_check", "medicine_check_pain", "medicine_check_pain_nopart",
     "short_open", "short_just", "short_chain",       # 질문 없는 고정 문장이어야 하는 짧은 대답 응답
     "listen",                                        # 경청 요청: 화제 전환·질문 없는 고정 문장
+    "complaint",                                     # 응답에 대한 지적: 사과·다시 말씀 요청 고정 문장
+    "recall_visit", "family_word", "family_word_visit",   # 대화 기록 회상·호칭 이어받기: 사실·확인된 관계만 쓰는 고정 문장
 }
 STT_REASK_ALLOWED = {"stt_retry", "stt_mic"}            # 안전 확인 밖의 일반 재질문만 (재질문 표지가 있어야 통과)
 OTHER_STRATEGIES_ALLOWED = {Strategy.EMPATHIZE, Strategy.FOLLOW_UP, Strategy.GENTLE_PROBE}
@@ -62,6 +64,9 @@ KIND_INTENT = {
     "short_yes": "직전 질문에 어르신이 '응'이라고 답하심: 그 대답을 받아 같은 이야기를 자연스럽게 이어 가기 (새 사실을 지어내지 않기)",
     "short_no": "직전 질문에 어르신이 '아니'라고 답하심: 그대로 받아들이고 캐묻지 않기 (새 사실을 지어내지 않기)",
     "emotion": "어르신이 말씀하신 마음에 공감하기",
+    "family_distance": "가족 연락이 뜸하다는 말에 허전한 마음을 받아 주고 곁에 있다고 말하기 (연락 여부를 되묻지 않기)",
+    "meal_done_item": "드신 음식을 말씀하셨으니 무엇을 드셨는지 다시 묻지 말고 잘 드셨다고 반가워하기",
+    "family_plan_more": "가족에게 해 주려는 준비 말씀에 그 마음을 받아 주기 (아직 하지 않은 일이니 끝난 것처럼 묻지 않기, 질문 없이)",
     "meal_memory": "추억을 들어주고 공감하며 그 음식에 대해 묻기 (방금 식사하신 것이 아님. 질문은 필요할 때만, 마음을 함께 나누는 것이 먼저)",
     "resume_topic": "잘 못 알아들어 다시 여쭌 뒤 다시 말씀하심: 직전 화제를 기억해서 자연스럽게 이어 가기",
     "stt_retry": "말씀을 알아듣지 못함: 내용을 추측해 답하지 말고, 다시 한 번 말씀해 달라고 자연스럽게 부탁하기",
@@ -120,6 +125,8 @@ SYSTEM_PROMPT = (
     "- 어르신이 좋은 추억을 이야기하면 새 질문보다 그 마음을 함께 나눈다.\n"
     "- 어르신이 대화를 마무리하려 하면 억지로 다른 이야기를 요구하지 않는다.\n"
     "- 어르신이 말하지 않은 사건, 행동, 관계, 감정을 사실처럼 단정하지 않는다.\n"
+    "- '~하려고', '~할 거야', '~해 줘야지', '~해 주려고'처럼 앞으로 할 일을 말씀하시면 아직 하지 않은 일로 다룬다. "
+    "그 일이 이미 끝난 것처럼 묻거나('다 만드셨어요?', '드셨어요?') 단정하지 않는다.\n"
     "- 어르신이 질문하시면 그 질문에 먼저 정확히 답한다. 전에 하신 말씀을 물으시면 기억한 내용으로 먼저 답하고 불필요한 질문을 붙이지 않는다."
 )
 QUESTION_PAUSE_HINT = ("직전 응답에서 이미 질문했습니다. 이번에는 새로운 질문을 하지 말고, 어르신의 말씀을 받아들이는 "
@@ -166,6 +173,30 @@ def fix_name_honorific(text: Optional[str], user_texts=()) -> Optional[str]:
         name, particle = m.group(1), m.group(2) or ""
         return f"{name} {NAME_BUN_PARTICLE[particle]}" if said_as_name(name) else m.group(0)
     return NAME_BUN_RE.sub(repl, text)
+
+
+# 잘못 들린 친족어를 사람처럼 높여 부르는 문장("솔녀 씨가", "소녀분이"): 사전에 없는 낱말을 인물로 인용하지 않는다 → 템플릿
+KIN_STT_QUOTE_RE = re.compile(r"(?:소녀|솔녀|손너|손여|손쥬|손짜)\s?(?:분|씨|님)")
+
+
+def kin_quote_issue(text: Optional[str]) -> Optional[str]:
+    return "kin_stt_quote" if text and KIN_STT_QUOTE_RE.search(text) else None
+
+
+# 계획·미완료 시제 보호: 이번 어르신 발화가 '앞으로 할 일'(려고·줄 거·해 줘야지 …)이고 그 행동이 음식 만들기·준비일 때만,
+# 그 행동이 이미 끝났다고 전제하는 로봇 표현("다 만드셨어요?", "끓이셨어요?")을 막는다. 과거형 전체를 막지 않는다
+# ("손녀분이 좋아하시던 음식인가요?"는 통과)
+PLAN_MARK_RE = re.compile(r"(?:려고|려구|줄려|주려|줄거|할거|해야지|줘야지|줘야겠|하려|할래)")
+PLAN_STEMS = ("끓", "만들", "요리", "해주", "해 주", "해줘", "해 줘", "차려", "준비")
+PLAN_DONE_RE = re.compile(r"끓이셨|끓였|만드셨|만들었|요리하셨|해 주셨|해주셨|해 드렸|해드렸|차리셨|준비하셨|준비했|다 하셨")
+
+
+def plan_tense_issue(text: Optional[str], user_text: Optional[str]) -> Optional[str]:
+    if not text or not user_text:
+        return None
+    if not PLAN_MARK_RE.search(re.sub(r"\s+", "", user_text)) or not any(s in user_text for s in PLAN_STEMS):
+        return None
+    return "plan_tense" if PLAN_DONE_RE.search(text) else None
 
 
 def is_user_question(text: Optional[str]) -> bool:

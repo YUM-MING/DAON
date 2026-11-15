@@ -82,9 +82,91 @@
     }, 1000);
   }
 
-  function speak(text, utteranceId){
-    const done = (ok) => { if(utteranceId !== -1) send({type:"tts_done", utterance_id: utteranceId, ok}); if(typeof log === "function" && utteranceId === -1) log("TTS 테스트 " + (ok ? "재생 완료" : "실패")); document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:false}})); };
-    document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:true}}));
+  /* ---------------- 미리 만들어 둔 음성 (음성 AI 담당분 추가) ----------------
+     web/tts/<목소리>/manifest.json 에 "문구 → mp3" 대응표가 들어 있다.
+     할 말이 거기 있으면 그 파일을 재생하고, 없으면 기존 브라우저 합성으로 넘어간다.
+
+     왜 이렇게 하는가
+       · 폰 내장 음성은 딱딱하고 고를 수도 없다 → 미리 만든 음성은 자연스럽다
+       · 합성에 걸리는 시간이 0 이 된다 → 응답이 그만큼 빨라진다
+       · <audio> 의 onended 는 확실히 온다 → tts_done 이 늦지 않아 마이크가 덜 막힌다
+
+     대응표에 없는 문구(치환자가 든 문장·LLM 응답)는 그대로 브라우저 합성이다.
+     대응표는 문구 전체를 키로 쓰므로, 문구를 고치면 그 문구만 조용히 합성으로
+     돌아간다. 엉뚱한 음성이 나갈 일은 없다.
+
+     ?voice=nova  → 다른 목소리 폴더를 쓴다
+     ?voice=off   → 미리 만든 음성을 쓰지 않는다 (예전 동작 그대로)
+  --------------------------------------------------------------------------- */
+  const TTS_VOICE = (new URLSearchParams(location.search).get("voice") || "cedar").trim();
+  const TTS_SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  let ttsMap = null, ttsDir = "", audioEl = null;
+
+  const ttsKey = (s) => (s || "").replace(/\s+/g, "");
+
+  if(isRobot && TTS_VOICE && TTS_VOICE !== "off"){
+    ttsDir = "tts/" + encodeURIComponent(TTS_VOICE) + "/";
+    fetch(ttsDir + "manifest.json", {cache:"no-store"})
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(j => {
+        const m = new Map();
+        for(const [text, file] of Object.entries(j.map || {})) m.set(ttsKey(text), file);
+        ttsMap = m.size ? m : null;
+        if(typeof log === "function") log(`미리 만든 음성 ${m.size}개 준비됨 (${TTS_VOICE})`);
+      })
+      .catch(() => {
+        ttsMap = null;
+        if(typeof log === "function") log(`미리 만든 음성 없음 (${TTS_VOICE}) — 브라우저 합성으로 말합니다`);
+      });
+
+    // 폰 브라우저는 사용자가 화면을 한 번 건드린 뒤에만 소리를 낼 수 있다.
+    // 첫 터치에 소리 없는 파일을 한 번 재생해서 미리 풀어 둔다.
+    const ttsUnlock = () => {
+      document.removeEventListener("pointerdown", ttsUnlock, true);
+      document.removeEventListener("keydown", ttsUnlock, true);
+      try{
+        audioEl = new Audio();
+        audioEl.preload = "auto";
+        audioEl.src = TTS_SILENT;
+        const p = audioEl.play();
+        if(p && p.catch) p.catch(() => {});
+      }catch(e){}
+    };
+    document.addEventListener("pointerdown", ttsUnlock, true);
+    document.addEventListener("keydown", ttsUnlock, true);
+  }
+
+  // 미리 만든 파일을 재생한다. 끝까지 재생되면 ok(), 재생 자체가 안 되면 fail().
+  function playRecorded(file, text, ok, fail){
+    if(!audioEl){ try{ audioEl = new Audio(); audioEl.preload = "auto"; }catch(e){ fail(); return; } }
+    const el = audioEl;
+    let settled = false, guard = null;
+    const over = (good) => {
+      if(settled) return; settled = true;
+      clearTimeout(guard);
+      el.onended = el.onerror = el.onloadedmetadata = null;
+      (good ? ok : fail)();
+    };
+    el.onended = () => over(true);
+    el.onerror = () => over(false);
+    el.onloadedmetadata = () => {                       // 길이를 알면 그만큼만 기다린다
+      if(isFinite(el.duration) && el.duration > 0){
+        clearTimeout(guard);
+        guard = setTimeout(() => over(true), el.duration * 1000 + 2500);
+      }
+    };
+    guard = setTimeout(() => over(true), Math.max(6000, text.length * 400));
+    try{
+      if("speechSynthesis" in window) speechSynthesis.cancel();
+      el.src = ttsDir + file;
+      el.currentTime = 0;
+      const p = el.play();
+      if(p && p.catch) p.catch(() => over(false));      // 아직 터치 전이면 합성으로 넘어간다
+    }catch(e){ over(false); }
+  }
+
+  // 브라우저 내장 합성 (예전 방식). 대응표에 없는 문구는 이쪽으로 온다.
+  function speakSynth(text, done){
     if(!("speechSynthesis" in window)){ setTimeout(() => done(false), Math.max(1500, text.length*120)); return; }
     try{
       speechSynthesis.cancel();
@@ -99,6 +181,23 @@
       setTimeout(() => finish(false), Math.max(4000, text.length*250));   // onend 가 안 오는 브라우저 대비
       speechSynthesis.speak(u);
     }catch(e){ done(false); }
+  }
+
+  function speak(text, utteranceId){
+    const done = (ok) => { if(utteranceId !== -1) send({type:"tts_done", utterance_id: utteranceId, ok}); if(typeof log === "function" && utteranceId === -1) log("TTS 테스트 " + (ok ? "재생 완료" : "실패")); document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:false}})); };
+    document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:true}}));
+    const file = ttsMap ? ttsMap.get(ttsKey(text)) : null;
+    if(file){
+      if(typeof log === "function") log(`음성 ${file} 재생`);
+      playRecorded(file, text,
+        () => done(true),
+        () => {
+          if(typeof log === "function") log(`음성 ${file} 재생 실패 — 브라우저 합성으로`);
+          speakSynth(text, done);
+        });
+      return;
+    }
+    speakSynth(text, done);
   }
 
   function onRobot(m){

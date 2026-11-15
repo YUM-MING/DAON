@@ -133,3 +133,28 @@ class Summarizer:
             return {"day": day, "status": "failed", "count": n, **stale}
         self.db.summary_put(hid, day, last_id, n, text, now)
         return {"day": day, "status": "ok", "count": n, "text": text, "created_ts": now}
+
+    # ---------------- 저장본 읽기 전용 (리포트 기준일 선택용 · 위 생성 흐름과 독립) ----------------
+    def saved(self, hid: int, days: int, now: float, end: str | None = None) -> dict:
+        """선택한 기간(기준일 포함 days 일, report_stats.period 와 같은 서버 로컬 날짜·[시작,끝) 경계)의 저장된 요약을
+        날짜별로 읽기만 한다. LLM 클라이언트를 만들거나 부르지 않고, DB 에 쓰지 않으며, 하루 호출 한도를 쓰지 않는다.
+        status: cached(저장본 있음 — 대화 건수와 관계없이 우선, 기존 상태 이름) / too_few(대화가 min_messages 미만) /
+                none(대화는 충분하지만 저장본 없음). count 는 summarize() 카드의 '대화 N건'과 같은 계산
+                (그날 대화 수, max_messages 상한, 오늘은 now 까지). 최신 날짜 먼저 (summarize() 와 같은 순서)."""
+        from server.core import report_stats as rs
+        c = self.cfg
+        d_from, d_to, _, _, names = rs.period(days, now, end)
+        stored = self.db.summaries_for_days(hid, names)
+        items = []
+        for day in reversed(names):
+            _, start, stop = day_bounds(day)
+            n = min(self.db.dialogue_count_between(hid, start, min(stop, now + 1)), int(c["max_messages"]))
+            s = stored.get(day)
+            if s:
+                items.append({"day": day, "status": "cached", "saved": True, "count": n, "text": s["text"],
+                              "created_ts": s["created_ts"], "summary_msg_count": s["msg_count"]})
+            else:
+                items.append({"day": day, "status": "too_few" if n < int(c["min_messages"]) else "none",
+                              "saved": False, "count": n, "text": None})
+        today = rs.today_str(now)
+        return {"today": today, "start": d_from, "end": d_to, "is_today": d_to == today, "days": days, "items": items}

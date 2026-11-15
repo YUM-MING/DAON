@@ -118,9 +118,26 @@
 
   <!-- ===================== 리포트 탭 ===================== -->
   <section class="tab-panel" id="tab-report">
+    <div class="card mb16" id="reportRangeBar">
+      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:8px;">
+        <b style="font-size:13px;">기준일</b>
+        <input type="date" id="reportEnd" class="btn sm outline" style="padding:6px 8px;" aria-label="리포트 기준일 (끝나는 날짜)">
+        <button class="btn sm ghost" id="reportEndToday" type="button">오늘</button>
+        <span style="display:inline-flex; flex-wrap:wrap; gap:6px;" role="group" aria-label="기간">
+          <button class="btn sm outline" type="button" data-report-days="1" aria-pressed="false">1일</button>
+          <button class="btn sm outline" type="button" data-report-days="3" aria-pressed="false">3일</button>
+          <button class="btn sm" type="button" data-report-days="7" aria-pressed="true">7일</button>
+        </span>
+        <span class="muted" id="reportRangeLabel" style="font-size:13px; font-weight:600;"></span>
+      </div>
+      <div class="muted" style="font-size:11px; line-height:1.5; margin-top:6px;">
+        기준일을 포함한 기간의 상태 요약·감정 통계·대화 내용 통계·저장된 AI 요약을 봅니다.
+      </div>
+    </div>
+
     <div class="card mb16" id="reportInsightsCard">
       <div class="ri-top">
-        <h3>이번 주 어르신 상태 요약</h3>
+        <h3 id="reportInsightsTitle">이번 주 어르신 상태 요약</h3>
         <button class="btn sm ghost" id="reportInsightsRefresh" title="다시 불러오기">↻ 새로고침</button>
       </div>
       <div class="muted ri-note" id="reportInsightsDisclaimer">대화 내용과 기록을 바탕으로 한 참고용 주의 신호이며 진단이나 예측이 아닙니다.</div>
@@ -132,7 +149,7 @@
         <h3>주간 감정 통계</h3>
         <div class="muted" style="font-size:12px; line-height:1.6; margin-bottom:10px;">
           <b>집계 기준</b><br>
-          · 최근 7일간, 카메라로 인식한 어르신의 표정이 <b>이전과 다른 감정으로 바뀔 때마다 1회</b> 집계됩니다.<br>
+          · <span id="emotionRangeText">최근 7일간</span>, 카메라로 인식한 어르신의 표정이 <b>이전과 다른 감정으로 바뀔 때마다 1회</b> 집계됩니다.<br>
           · 같은 표정이 계속 유지되는 동안은 횟수가 늘지 않습니다. (프레임·초 단위가 아님)<br>
           · 요일별 막대는 그날 집계된 감정 비율, "총 N회"는 감정이 바뀐 횟수입니다.
         </div>
@@ -165,7 +182,7 @@
 
     <div class="card mt16" id="reportStatsCard">
       <div class="rs-head">
-        <h3>최근 7일 대화 내용 통계</h3>
+        <h3 id="reportStatsTitle">최근 7일 대화 내용 통계</h3>
         <button class="btn sm ghost" id="reportStatsRefresh" title="다시 불러오기">↻ 새로고침</button>
       </div>
       <div class="muted rs-note">어르신이 직접 말씀하신 내용의 언급 횟수이며, 측정값이나 진단이 아닙니다.</div>
@@ -233,7 +250,8 @@
 <script src="js/guardian.js"></script>
 <script src="js/ws-client.js"></script>    <!-- 통합 서버 연결 (file:// 로 열면 비활성) -->
 <script src="js/guardian-ext.js"></script> <!-- 집 코드·로그아웃·개발자 도구·리포트 -->
-<script src="js/report-stats.js?v=1"></script> <!-- 리포트: 대화 내용 통계 카드 -->
-<script src="js/report-insights.js?v=1"></script> <!-- 리포트: 이번 주 어르신 상태 요약 카드 -->
+<script src="js/report-range.js?v=1"></script> <!-- 리포트: 기준일·기간 선택 (통계·상태 요약 공용) -->
+<script src="js/report-stats.js?v=2"></script> <!-- 리포트: 대화 내용 통계 카드 -->
+<script src="js/report-insights.js?v=2"></script> <!-- 리포트: 이번 주 어르신 상태 요약 카드 -->
 </body>
 </html>

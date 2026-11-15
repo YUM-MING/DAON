@@ -228,9 +228,23 @@ def create_app(config: dict) -> FastAPI:
         return db.alerts(home_id, limit)
 
     @app.get("/api/homes/{home_id}/report")
-    async def home_report(request: Request, home_id: int, days: int = 7):
+    async def home_report(request: Request, home_id: int, days: int = 7, end: str | None = None):
+        """end 가 없으면 기존 그대로 (지금 시각부터 days×24시간). end(YYYY-MM-DD)가 있으면 기준일 포함 days 일
+        (서버 로컬 날짜, [시작, 끝) — 통계·상태 요약과 같은 기간), days·end 검증은 report/stats 와 같고 오류는 400.
+        그때 응답에 today·start·end·is_today 를 더하고 emotion_week 행에 날짜(date)를 넣는다."""
         require_member(request, home_id)
-        return db.report(home_id, days)
+        if end is None:
+            return db.report(home_id, days)
+        now = time.time()
+        try:
+            n = report_stats.parse_days(str(days))
+            e = report_stats.parse_end(end, now)
+        except ValueError as err:
+            raise HTTPException(400, str(err))
+        d_from, d_to, start, stop, _ = report_stats.period(n, now, e)
+        r = await asyncio.to_thread(db.report_between, home_id, start, stop, n)
+        today = report_stats.today_str(now)
+        return {**r, "today": today, "start": d_from, "end": d_to, "is_today": d_to == today}
 
     @app.get("/api/homes/{home_id}/report/summary/status")
     async def summary_status(request: Request, home_id: int):
@@ -238,6 +252,19 @@ def create_app(config: dict) -> FastAPI:
         require_member(request, home_id)
         return {"available": await asyncio.to_thread(core.summarizer.available), "limits": {
             k: config["summary"][k] for k in ("min_messages", "max_messages", "daily_limit", "cooldown_sec")}}
+
+    @app.get("/api/homes/{home_id}/report/summary/saved")
+    async def home_report_summary_saved(request: Request, home_id: int, days: str = "7", end: str | None = None):
+        """저장된 AI 요약을 기간(기준일 포함 days 일, end 없으면 오늘 · 서버 로컬 날짜)별로 읽기만 한다.
+        LLM 호출 없음, DB 쓰기 없음, 하루 호출 한도 소모 없음. days·end 검증과 400 형식은 report/stats 와 같다."""
+        require_member(request, home_id)
+        now = time.time()
+        try:
+            n = report_stats.parse_days(days)
+            e = report_stats.parse_end(end, now)
+        except ValueError as err:
+            raise HTTPException(400, str(err))
+        return await asyncio.to_thread(core.summarizer.saved, home_id, n, now, e)
 
     @app.get("/api/homes/{home_id}/report/dialogues")
     async def home_report_dialogues(request: Request, home_id: int, day: str | None = None, limit: int = 1000):
@@ -255,27 +282,35 @@ def create_app(config: dict) -> FastAPI:
                 "items": [{"ts": r["ts"], "who": r["data"].get("who"), "text": r["data"].get("text", "")} for r in rows]}
 
     @app.get("/api/homes/{home_id}/report/stats")
-    async def home_report_stats(request: Request, home_id: int, days: str = "7"):
+    async def home_report_stats(request: Request, home_id: int, days: str = "7", end: str | None = None):
         """대화 내용 통계 (LLM 호출 없음, 언급 기준 집계·basis=user_said). days: 1~30 정수 (아니면 400).
+        end: 기준일 YYYY-MM-DD (선택, 없으면 오늘 · 서버 로컬 날짜). 형식 오류·없는 날짜·미래면 400. 기간 = 기준일 포함 days 일.
         conversations 는 날짜별 발화·응답 건수(세션 수 아님). user_msgs 는 중복 제거 뒤 어르신 발화 전부(STT 불명확·회상
         질문 포함), analyzed 는 그중 내용 통계에 들어간 수, skipped.duplicate 는 user_msgs 에도 넣지 않은 중복 건수."""
         require_member(request, home_id)
+        now = time.time()
         try:
             n = report_stats.parse_days(days)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        return await asyncio.to_thread(report_stats.compute, db, home_id, n, time.time())
+            e = report_stats.parse_end(end, now)
+        except ValueError as err:
+            raise HTTPException(400, str(err))
+        r = await asyncio.to_thread(report_stats.compute, db, home_id, n, now, None, e)
+        return {**r, **report_stats.range_fields(now, r["to"])}          # today·end·is_today (추가 필드)
 
     @app.get("/api/homes/{home_id}/report/insights")
-    async def home_report_insights(request: Request, home_id: int, days: str = "7"):
+    async def home_report_insights(request: Request, home_id: int, days: str = "7", end: str | None = None):
         """이번 주 상태 요약: 규칙 기반 주의 신호 (진단·예측 아님, LLM 호출 없음). 최근 days 일과 직전 같은 길이 기간 비교.
-        days 검증·인증·오류 형식은 report/stats 와 같다. 알림은 alerts 사실 정보로만 (신호·종합 단계에 넣지 않음)."""
+        days·end 검증·인증·오류 형식은 report/stats 와 같다 (end 가 있으면 기준일 포함 days 일, 직전 기간도 함께 이동).
+        알림은 alerts 사실 정보로만 (신호·종합 단계에 넣지 않음)."""
         require_member(request, home_id)
+        now = time.time()
         try:
             n = report_stats.parse_days(days)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        return await asyncio.to_thread(report_insights.compute, db, home_id, n, time.time())
+            e = report_stats.parse_end(end, now)
+        except ValueError as err:
+            raise HTTPException(400, str(err))
+        r = await asyncio.to_thread(report_insights.compute, db, home_id, n, now, None, e)
+        return {**r, **report_stats.range_fields(now, r["to"])}          # today·end·is_today (추가 필드)
 
     @app.post("/api/homes/{home_id}/report/summary")
     async def home_report_summary(request: Request, home_id: int, body: dict = Body(default={})):

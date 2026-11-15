@@ -252,6 +252,32 @@ class DB:
         return {"days": days, "emotion_week": week_rows, "conversations": list(reversed(convo)),
                 "alerts": alerts, "alert_count": len([a for a in alerts if a["created_ts"] >= since])}
 
+    def report_between(self, hid: int, start: float, end: float, days: int) -> dict[str, Any]:
+        """report() 의 [start, end) 버전 (리포트 기준일 선택용, 읽기 전용). report() 는 그대로 둔다.
+        감정 집계 규칙은 report() 와 같다: 저장된 emotion 이벤트(표정이 바뀔 때만 기록됨)를 한 건씩 그대로 센다.
+        기간 밖 직전 감정과 비교하지 않으므로 기간 첫 이벤트도 1회로 센다. 같은 조회 상한(최신 5000건)·라벨 기본값·
+        감정 키를 쓴다. 기간이 일주일을 넘을 수 있어 요일 대신 날짜별로 묶고, 행마다 요일(day)과 날짜(date)를 준다."""
+        names = ["월", "화", "수", "목", "금", "토", "일"]
+        per: dict[str, dict] = {}
+        for r in self._q("SELECT * FROM events WHERE home_id=? AND type='emotion' AND ts>=? AND ts<? "
+                         "ORDER BY ts DESC LIMIT 5000", hid, start, end):
+            data = json.loads(r["data"] or "{}")
+            lt = time.localtime(r["ts"])
+            date = time.strftime("%Y-%m-%d", lt)
+            per.setdefault(date, {"day": names[lt.tm_wday], "date": date,
+                                  "happy": 0, "sad": 0, "angry": 0, "neutral": 0, "surprised": 0})
+            lab = data.get("label", "neutral")
+            per[date][lab] = per[date].get(lab, 0) + 1
+        convo = []
+        for r in self._q("SELECT * FROM events WHERE home_id=? AND type='dialogue' AND ts>=? AND ts<? "
+                         "ORDER BY ts DESC LIMIT 30", hid, start, end):
+            d = self.row(r)
+            d["data"] = json.loads(d["data"] or "{}")
+            convo.append(d)
+        alerts = self.alerts(hid, 50)
+        return {"days": days, "emotion_week": [per[d] for d in sorted(per)], "conversations": list(reversed(convo)),
+                "alerts": alerts, "alert_count": len([a for a in alerts if start <= a["created_ts"] < end])}
+
     # ---------------- AI 요약 (보호자가 버튼을 눌렀을 때만) ----------------
     def dialogues_between(self, hid: int, start: float, end: float, limit: int) -> list[dict]:
         """[start, end) 구간의 대화(dialogue 이벤트)를 시간순으로. limit 을 넘으면 오래된 것부터 버린다."""
@@ -277,6 +303,20 @@ class DB:
 
     def summary_calls_since(self, hid: int, since: float) -> int:
         r = self._one("SELECT COUNT(*) AS n FROM summary_calls WHERE home_id=? AND ts>=?", hid, since)
+        return int(r["n"]) if r else 0
+
+    # ---------------- 저장된 AI 요약 읽기 (읽기 전용 · 리포트 기준일 선택용) ----------------
+    def summaries_for_days(self, hid: int, days: list[str]) -> dict[str, dict]:
+        """이 집(home_id)의 저장된 요약 중 days 에 해당하는 것만 {day: 행}. SELECT 만 한다."""
+        if not days:
+            return {}
+        rows = self._q(f"SELECT * FROM summaries WHERE home_id=? AND day IN ({','.join('?' * len(days))})", hid, *days)
+        return {r["day"]: self.row(r) for r in rows}
+
+    def dialogue_count_between(self, hid: int, start: float, end: float) -> int:
+        """[start, end) 구간의 대화(dialogue 이벤트) 건수. SELECT 만 한다."""
+        r = self._one("SELECT COUNT(*) AS n FROM events WHERE home_id=? AND type='dialogue' AND ts>=? AND ts<?",
+                      hid, start, end)
         return int(r["n"]) if r else 0
 
     # ---------------- 리포트 '대화 내용 통계' (report_stats) ----------------

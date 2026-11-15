@@ -1,6 +1,7 @@
 /* =========================================================
    report-stats.js — 리포트 탭 "최근 7일 대화 내용 통계" 카드
-   - GET /api/homes/{id}/report/stats?days=7 (서버: server/core/report_stats.py)
+   - GET /api/homes/{id}/report/stats?days=N[&end=YYYY-MM-DD] (서버: server/core/report_stats.py)
+   - 기준일·기간은 report-range.js(window.DaonReportRange)와 공유. 없으면 기존처럼 days=7 (오늘 기준)
    - 어르신이 직접 말한 내용의 '언급 횟수'만 보여준다 (측정·진단 아님)
    - 호출 시점: 리포트 탭을 열 때, "새로고침" 버튼을 누를 때뿐 (자동 갱신 없음)
    - 응답 값은 전부 textContent 로만 그린다 (innerHTML 에 넣지 않음)
@@ -10,9 +11,11 @@
   const card = document.getElementById("reportStatsCard");
   const body = document.getElementById("reportStatsBody");
   const refreshBtn = document.getElementById("reportStatsRefresh");
+  const titleEl = document.getElementById("reportStatsTitle");
   if(!card || !body) return;
 
-  const DAYS = 7;
+  const DEFAULT_DAYS = 7;
+  const range = () => window.DaonReportRange || null;
   const SYMPTOM_KO = { pain:"아프다", ache:"쑤신다", numb:"저린다", stiff:"뻐근하다", cold_ache:"시리다", throb:"욱신거린다", dizzy:"어지럽다" };
   const EMOTION_KO = { lonely:"외로움", sad:"슬픔", anxious:"불안", angry:"화남", lethargic:"무기력", grief:"그리움" };
   const EMOTION_HIDDEN = new Set(["positive"]);     // 취향 문장("좋아해")이 섞여 기분 지표로 쓰지 않는다
@@ -60,7 +63,20 @@
     return `${+m[2]}/${+m[3]} (${WEEKDAY[d.getDay()]})`;
   }
 
+  function md(s){ const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || "")); return m ? `${+m[2]}/${+m[3]}` : String(s || ""); }
+  function rangeText(from, to){ return !from || !to ? "" : from === to ? md(to) : `${md(from)} ~ ${md(to)}`; }
+  /* 기준일이 오늘이 아니면 선택한 범위, 오늘이면 기존 문구 ("최근 7일 …") */
+  function periodWords(r){
+    const days = num(r.days) || DEFAULT_DAYS;
+    if(r.is_today === false && r.from && r.to) return { title: `${rangeText(r.from, r.to)} 대화 내용 통계`,
+      empty: `선택한 기간(${rangeText(r.from, r.to)})에 분석할 대화가 없습니다` };
+    return { title: days === 1 ? "오늘 대화 내용 통계" : `최근 ${days}일 대화 내용 통계`,
+             empty: days === 1 ? "오늘 분석할 대화가 없습니다" : `최근 ${days}일간 분석할 대화가 없습니다` };
+  }
+
   function render(r){
+    const words = periodWords(r);
+    if(titleEl) titleEl.textContent = words.title;
     const convo = Array.isArray(r.conversations) ? r.conversations : [];
     const userTotal = convo.reduce((a, c) => a + num(c.user_msgs), 0);
     const robotTotal = convo.reduce((a, c) => a + num(c.robot_msgs), 0);
@@ -79,7 +95,7 @@
     out.push(top);
 
     if(userTotal === 0){
-      out.push(h("p", "muted rs-msg", `최근 ${DAYS}일간 분석할 대화가 없습니다`));
+      out.push(h("p", "muted rs-msg", words.empty));
       body.replaceChildren(...out);
       return;
     }
@@ -192,25 +208,36 @@
     return j;
   }
 
-  let loading = false;
+  let loading = false, again = false, inflight = "";
+  const currentQuery = () => (range() ? range().query() : `days=${DEFAULT_DAYS}`);
   async function load(){
-    if(loading) return;                              // 탭 연타·버튼 연타 시 중복 호출 방지
+    if(loading){                                     // 탭 연타·버튼 연타 시 중복 호출 방지
+      if(currentQuery() !== inflight) again = true;  // 진행 중에 기준일·기간이 바뀌었으면 끝난 뒤 한 번 더
+      return;
+    }
     loading = true;
+    again = false;
     if(refreshBtn) refreshBtn.disabled = true;
     showMessage("대화 내용 통계를 불러오는 중…");
+    const q = inflight = currentQuery();
     try{
       if(!window.DaonReady) throw new Error("서버에 연결된 화면에서만 볼 수 있습니다");
       const info = await window.DaonReady;
       const hid = info && info.home && info.home.id;
       if(!hid) throw new Error("집 정보를 찾지 못했습니다");
-      const r = await getJSON(`/api/homes/${encodeURIComponent(hid)}/report/stats?days=${DAYS}`);
-      render(r);
+      const r = await getJSON(`/api/homes/${encodeURIComponent(hid)}/report/stats?${q}`);
+      if(q !== currentQuery()) again = true;         // 기다리는 사이 기준일·기간이 바뀜 → 그리지 않고 다시 불러온다
+      else{
+        render(r);
+        if(range()) range().applyResponse(r);
+      }
     }catch(err){
       console.warn("[report-stats]", err);
       showMessage(`통계를 불러오지 못했습니다: ${err && err.message ? err.message : err}`, "rs-error");
     }finally{
       loading = false;
       if(refreshBtn) refreshBtn.disabled = false;
+      if(again) load();
     }
   }
 
@@ -225,6 +252,7 @@
     });
   });
   if(refreshBtn) refreshBtn.addEventListener("click", load);
+  document.addEventListener("daon:report-range", load);    // 기준일·기간 선택이 바뀌면 (report-range.js)
   const panel = document.getElementById("tab-report");
   if(panel && panel.classList.contains("active")) load();   // 리포트 탭이 이미 열린 상태로 시작한 경우
   else showMessage("리포트 탭을 열면 통계를 불러옵니다");

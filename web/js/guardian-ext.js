@@ -156,14 +156,39 @@
       });
     }).catch(()=>{});
 
-    /* ---------- 리포트 탭: DB 기반 ---------- */
+    /* ---------- 리포트 탭: DB 기반 ----------
+       주간 감정 통계: 상단 기준일·기간(report-range.js)을 따라 /report?days=N&end=YYYY-MM-DD 로 그린다
+       (기준일 포함 N일, 서버 로컬 날짜). 서버의 '오늘'을 아직 모르면 기존 요청(days=7) 그대로. */
+    const md = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || "")); return m ? `${+m[2]}/${+m[3]}` : String(s || ""); };
+    const emoQuery = () => {
+      const g = window.DaonReportRange ? DaonReportRange.get() : null;
+      const end = g ? (g.isToday ? g.today : g.end) : null;
+      return end ? `days=${encodeURIComponent(g.days)}&end=${encodeURIComponent(end)}` : "days=7";
+    };
+    let emoSeq = 0;
     function renderReport(){
-      api(`/api/homes/${hid}/report?days=7`).then(r => {
+      const q = emoQuery(), my = ++emoSeq;
+      api(`/api/homes/${hid}/report?${q}`).then(r => {
+        if(my !== emoSeq || q !== emoQuery()) return;     // 기다리는 사이 선택이 바뀜 → 지난 응답은 그리지 않는다
         const ew = document.getElementById("emotionWeekChart");
+        const dated = typeof r.start === "string" && typeof r.end === "string";
+        const plain = !dated || (r.is_today && r.days === 7);    // 오늘·7일 (또는 기존 응답): 기존 문구
+        const span = r.start === r.end ? md(r.end) : `${md(r.start)}~${md(r.end)}`;
+        const words = document.getElementById("emotionRangeText");
+        if(words) words.textContent = plain ? "최근 7일간" : `선택한 ${r.days}일간(${span})`;
         if(r.emotion_week && r.emotion_week.length && typeof renderEmotionWeek === "function"){
           ew.innerHTML = "";
           renderEmotionWeek("emotionWeekChart", r.emotion_week);
-        } else if(ew){ ew.innerHTML = '<p class="muted">최근 7일 표정 기록이 없습니다</p>'; }
+          if(dated){                                      // 요일 옆에 날짜: "월요일 11/10" (charts.js 는 그대로 두고 라벨만 덧씀)
+            ew.querySelectorAll(".bar-group .bg-label > span:first-child").forEach((s, i) => {
+              const row = r.emotion_week[i];
+              if(row && row.date) s.textContent = `${row.day}요일 ${md(row.date)}`;
+            });
+          }
+        } else if(ew){
+          ew.innerHTML = plain ? '<p class="muted">최근 7일 표정 기록이 없습니다</p>'
+                               : `<p class="muted">선택한 기간(${span})에 표정 기록이 없습니다</p>`;
+        }
       }).catch(()=>{});
     }
 
@@ -193,46 +218,101 @@
       document.getElementById("convoRefresh").addEventListener("click", load);
       setDay(ymd(new Date()));
     })();
-    /* ---------- 리포트 탭: AI 요약 (버튼을 눌렀을 때만 서버가 LLM 호출) ---------- */
+    /* ---------- 리포트 탭: AI 요약 (버튼을 눌렀을 때만 서버가 LLM 호출) ----------
+       상단 기준일·기간 선택(report-range.js · daon:report-range)에 맞춰 저장된 날짜별 요약을 읽어 보여 준다
+       (GET /report/summary/saved: LLM 호출·DB 쓰기·하루 한도 소모 없음).
+       새 요약 만들기(POST /report/summary, 기존 동작 그대로)는 기준일이 오늘일 때만: scope = 상단 기간(1일→today, 3→3, 7→7).
+       기존 드롭다운(#aiSummaryScope)은 지우지 않고 숨긴 채 값만 상단 기간에 맞춘다. */
     (function setupAiSummary(){
       const btn = document.getElementById("aiSummaryBtn");
       const scope = document.getElementById("aiSummaryScope");
       const out = document.getElementById("aiSummaryResult");
       if(!btn || !scope || !out) return;
       const esc = (s) => String(s).replace(/[&<>]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+      const range = () => (window.DaonReportRange ? DaonReportRange.get() : { end: null, days: 7, isToday: true });
+      const rangeQuery = () => (window.DaonReportRange ? DaonReportRange.query() : "days=7");
+      const SCOPE_OF = { 1: "today", 3: "3", 7: "7" };
       const MSG = {
         too_few: (d) => `대화가 ${d.count}건뿐이라 요약하지 않았습니다 (최소 4건 필요)`,
         cooldown: (d) => `방금 요약했습니다. ${Math.ceil((d.retry_after || 0) / 60)}분 뒤 새 대화까지 포함해 다시 요약할 수 있습니다 (저장된 요약 표시)`,
         limit: () => "오늘의 AI 요약 사용 한도에 도달했습니다 (저장된 요약이 있으면 표시)",
         unavailable: () => "AI 요약이 설정되어 있지 않습니다 (서버의 LLM 설정 필요)",
         failed: () => "지금은 요약할 수 없습니다. 잠시 후 다시 시도하거나 아래 원문 대화를 확인하세요",
+        none: () => (range().isToday && available ? "아직 저장된 요약이 없습니다 (AI 요약 보기를 누르면 만듭니다)" : "저장된 요약이 없습니다"),
       };
+      // 기존 카드 렌더러 (생성 결과·저장본 공용)
+      const renderDays = (days) => days.map(d => {
+        const note = d.status === "ok" || d.status === "cached" ? "" : (MSG[d.status] ? MSG[d.status](d) : "");
+        const when = d.created_ts ? ` · ${t(d.created_ts)} 요약` : "";
+        const body = d.text ? `<div style="white-space:pre-wrap; font-size:13px; line-height:1.6;">${esc(d.text)}</div>` : "";
+        return `<div class="card" style="padding:10px 12px; margin-bottom:8px;">
+              <div class="muted" style="font-size:12px; margin-bottom:4px;"><b>${d.day}</b> · 대화 ${d.count}건${when}</div>
+              ${body}${note ? `<p class="muted" style="font-size:12px; margin:4px 0 0;">${note}</p>` : ""}</div>`;
+      }).join("");
+
+      scope.style.display = "none";                       // 기존 드롭다운은 숨김 (값은 아래 sync 에서 상단 기간에 맞춤)
+      const info = el(`<span class="muted" id="aiSummaryModeNote" style="font-size:12px; display:none;"></span>`);
+      btn.insertAdjacentElement("afterend", info);
+      let available = true, busy = false;
+
+      function sync(){
+        const r = range();
+        const v = SCOPE_OF[r.days] || "today";
+        if(Array.from(scope.options).some(o => o.value === v)) scope.value = v;
+        btn.style.display = r.isToday ? "" : "none";
+        if(!busy) btn.disabled = !available;
+        const msg = !r.isToday ? "저장된 요약만 표시합니다 (새 요약은 기준일이 오늘일 때 만들 수 있습니다)"
+                  : !available ? MSG.unavailable() : "";
+        info.textContent = msg;
+        info.style.display = msg ? "" : "none";
+      }
+
+      let seq = 0;
+      async function loadSaved(gen, fallback){             // gen: 방금 생성한 결과 {day: 항목} — 한도·실패 등 안내를 덧붙임
+        const my = ++seq;
+        try{
+          const r = await api(`/api/homes/${hid}/report/summary/saved?${rangeQuery()}`);
+          if(my !== seq) return;                           // 그 사이 선택이 바뀜 → 최신 요청만 그린다
+          const items = (r.items || []).map(it => {
+            const g = gen && gen[it.day];
+            return g && g.status !== "ok" && g.status !== "cached" && MSG[g.status] ? { ...it, status: g.status, retry_after: g.retry_after } : it;
+          });
+          out.innerHTML = items.length ? renderDays(items) : `<p class="muted">표시할 날짜가 없습니다</p>`;
+        }catch(err){
+          if(my !== seq) return;
+          out.innerHTML = fallback && fallback.length ? renderDays(fallback) : `<p class="muted">${esc(err.message)}</p>`;
+        }
+      }
+
       api(`/api/homes/${hid}/report/summary/status`).then(s => {
-        if(!s.available){ btn.disabled = true; btn.title = "서버에 LLM 이 설정되지 않았습니다"; out.innerHTML = `<p class="muted">${MSG.unavailable()}</p>`; }
+        if(!s.available){ available = false; btn.title = "서버에 LLM 이 설정되지 않았습니다"; sync(); }
       }).catch(()=>{});
       btn.addEventListener("click", async () => {
-        btn.disabled = true; const label = btn.textContent; btn.textContent = "요약 중…";
+        if(!range().isToday) return;
+        sync();
+        busy = true; btn.disabled = true; const label = btn.textContent; btn.textContent = "요약 중…";
+        seq++;                                             // 진행 중인 저장본 읽기 결과는 버린다
         out.innerHTML = `<p class="muted">AI가 대화를 요약하고 있어요…</p>`;
         try{
           const r = await api(`/api/homes/${hid}/report/summary`, { scope: scope.value });
-          out.innerHTML = r.days.map(d => {
-            const note = d.status === "ok" || d.status === "cached" ? "" : (MSG[d.status] ? MSG[d.status](d) : "");
-            const when = d.created_ts ? ` · ${t(d.created_ts)} 요약` : "";
-            const body = d.text ? `<div style="white-space:pre-wrap; font-size:13px; line-height:1.6;">${esc(d.text)}</div>` : "";
-            return `<div class="card" style="padding:10px 12px; margin-bottom:8px;">
-              <div class="muted" style="font-size:12px; margin-bottom:4px;"><b>${d.day}</b> · 대화 ${d.count}건${when}</div>
-              ${body}${note ? `<p class="muted" style="font-size:12px; margin:4px 0 0;">${note}</p>` : ""}</div>`;
-          }).join("");
+          const gen = {};
+          (r.days || []).forEach(d => { gen[d.day] = d; });
+          await loadSaved(gen, r.days);                    // 생성이 끝나면 새 저장본으로 패널 갱신
         }catch(err){
           out.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
         }finally{
-          btn.disabled = false; btn.textContent = label;
+          busy = false; btn.textContent = label; sync();
         }
       });
+      document.addEventListener("daon:report-range", () => { sync(); loadSaved(); });
+      sync();
+      loadSaved();
     })();
 
     renderReport();
     document.addEventListener("daon:analysis", renderReport);      // 분석 탭 목업이 리포트를 덮어쓰면 다시 그림
+    document.addEventListener("daon:report-range", renderReport);  // 상단 기준일·기간 변경
+    document.addEventListener("daon:report-today", renderReport);  // 서버의 '오늘'을 처음 알게 됨 → 날짜 기준으로 다시 그림
     setInterval(renderReport, 30000);
   }).catch(()=>{});
 })();

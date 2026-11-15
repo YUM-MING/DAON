@@ -1,6 +1,7 @@
 /* =========================================================
    report-insights.js — 리포트 탭 "이번 주 어르신 상태 요약" 카드
-   - GET /api/homes/{id}/report/insights?days=7 (서버: server/core/report_insights.py)
+   - GET /api/homes/{id}/report/insights?days=N[&end=YYYY-MM-DD] (서버: server/core/report_insights.py)
+   - 기준일·기간은 report-range.js(window.DaonReportRange)와 공유. 없으면 기존처럼 days=7 (오늘 기준)
    - 규칙 기반 참고 신호를 보여 준다 (진단·예측 아님, 임계값은 검증되지 않은 개발용 초기값)
    - 호출 시점: 리포트 탭으로 전환할 때, "새로고침" 버튼을 누를 때뿐 (자동 갱신 없음)
    - 응답 값은 전부 textContent 로만 그린다 (innerHTML 에 넣지 않음)
@@ -10,9 +11,12 @@
   const body = document.getElementById("reportInsightsBody");
   const refreshBtn = document.getElementById("reportInsightsRefresh");
   const disclaimerEl = document.getElementById("reportInsightsDisclaimer");
+  const titleEl = document.getElementById("reportInsightsTitle");
   if(!card || !body) return;
 
-  const DAYS = 7;
+  const DEFAULT_DAYS = 7;
+  const range = () => window.DaonReportRange || null;
+  const ONE_DAY_NOTE = "하루 기준은 판단 보류입니다. 주간 경향은 최소 2일의 기록이 있어야 판단합니다 (확인된 신호는 그대로 표시).";
   const FIXED_NOTE = "대화 내용과 기록을 바탕으로 한 참고용 주의 신호이며 진단이나 예측이 아닙니다.";
   const CLEAR_NOTE = "건강·정서 상태가 안정적이라는 뜻이 아니라, 수집된 데이터에서 설정된 주의 신호가 확인되지 않았다는 뜻입니다.";
   const ALERT_FIXED = "알림 이력은 종합 단계 계산에 반영되지 않습니다.";
@@ -55,9 +59,19 @@
     return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
+  function md(s){ const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str(s)); return m ? `${+m[2]}/${+m[3]}` : str(s); }
+  function rangeText(from, to){ return !from || !to ? "" : from === to ? md(to) : `${md(from)} ~ ${md(to)}`; }
+  /* 기준일이 오늘이 아니면 선택한 범위, 오늘이면 기존 문구 ("이번 주 …") */
+  function titleFor(r){
+    const days = num(r.days) || DEFAULT_DAYS;
+    if(r.is_today === false && r.from && r.to) return `${rangeText(str(r.from), str(r.to))} 어르신 상태 요약`;
+    return days === 7 ? "이번 주 어르신 상태 요약" : days === 1 ? "오늘 어르신 상태 요약" : `최근 ${days}일 어르신 상태 요약`;
+  }
+
   /* ---------- 렌더링 ---------- */
   function render(r){
     r = obj(r);
+    if(titleEl) titleEl.textContent = titleFor(r);
     if(disclaimerEl) disclaimerEl.textContent = str(r.disclaimer) || FIXED_NOTE;
     const out = [];
 
@@ -77,6 +91,7 @@
       `분석된 어르신 발화 ${num(sf.analyzed)}건 · 분석된 날 ${num(sf.days_with_data)}일${period}`));
     // 판단 보류면 summary 가 이미 이유를 말하므로 이유 상자는 생략 (그 외 단계에서 데이터가 부족할 때만 표시)
     if(sf.enough === false && str(sf.reason) && level !== "판단 보류") out.push(h("div", "ri-reason", `ⓘ ${str(sf.reason)}`));
+    if(num(r.days) === 1) out.push(h("div", "ri-reason", `ⓘ ${ONE_DAY_NOTE}`));      // 1일 기간 (임계값은 그대로)
 
     // 신호
     const sigSec = section("확인된 신호");
@@ -174,24 +189,36 @@
     return j;
   }
 
-  let loading = false;
+  let loading = false, again = false, inflight = "";
+  const currentQuery = () => (range() ? range().query() : `days=${DEFAULT_DAYS}`);
   async function load(){
-    if(loading) return;                              // 탭 연타·버튼 연타 시 중복 호출 방지
+    if(loading){                                     // 탭 연타·버튼 연타 시 중복 호출 방지
+      if(currentQuery() !== inflight) again = true;  // 진행 중에 기준일·기간이 바뀌었으면 끝난 뒤 한 번 더
+      return;
+    }
     loading = true;
+    again = false;
     if(refreshBtn) refreshBtn.disabled = true;
     showMessage("상태 요약을 불러오는 중…");
+    const q = inflight = currentQuery();
     try{
       if(!window.DaonReady) throw new Error("서버에 연결된 화면에서만 볼 수 있습니다");
       const info = await window.DaonReady;
       const hid = info && info.home && info.home.id;
       if(!hid) throw new Error("집 정보를 찾지 못했습니다");
-      render(await getJSON(`/api/homes/${encodeURIComponent(hid)}/report/insights?days=${DAYS}`));
+      const r = await getJSON(`/api/homes/${encodeURIComponent(hid)}/report/insights?${q}`);
+      if(q !== currentQuery()) again = true;         // 기다리는 사이 기준일·기간이 바뀜 → 그리지 않고 다시 불러온다
+      else{
+        render(r);
+        if(range()) range().applyResponse(r);
+      }
     }catch(err){
       console.warn("[report-insights]", err);
       showMessage(`상태 요약을 불러오지 못했습니다: ${err && err.message ? err.message : err}`, "ri-error");
     }finally{
       loading = false;
       if(refreshBtn) refreshBtn.disabled = false;
+      if(again) load();
     }
   }
 
@@ -206,6 +233,7 @@
     });
   });
   if(refreshBtn) refreshBtn.addEventListener("click", load);
+  document.addEventListener("daon:report-range", load);    // 기준일·기간 선택이 바뀌면 (report-range.js)
   const panel = document.getElementById("tab-report");
   if(panel && panel.classList.contains("active")) load();
   else showMessage("리포트 탭을 열면 상태 요약을 불러옵니다");

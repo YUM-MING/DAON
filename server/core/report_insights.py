@@ -111,11 +111,21 @@ def comparison(prev: dict, days: int) -> dict:
 
 
 # ---------------- 신호 ----------------
+def span_phrase(days: int, d_from: str, d_to: str, is_today: bool) -> str:
+    """문장 속 기간 표현: 기준일이 오늘이면 기존 그대로 '최근 N일간', 아니면 '선택한 N일간(11/8~11/14)'"""
+    if is_today:
+        return f"최근 {days}일간"
+    md = lambda s: f"{int(s[5:7])}/{int(s[8:10])}"   # noqa: E731
+    rng = md(d_to) if d_from == d_to else f"{md(d_from)}~{md(d_to)}"
+    return f"선택한 {days}일간({rng})"
+
+
 def detect(cur: dict, prev: dict, cam: dict, cam_prev: dict, days: int,
-           compare: bool = True) -> tuple[list[dict], list[str]]:
+           compare: bool = True, span: str | None = None) -> tuple[list[dict], list[str]]:
     """(signals, recommendations). cur/prev 는 report_stats.aggregate 결과.
-    compare=False 면 previous 는 None, 직전 기간 비교 문장·대화량 감소 신호를 만들지 않는다."""
-    span, before = f"최근 {days}일간", f"직전 {days}일"
+    compare=False 면 previous 는 None, 직전 기간 비교 문장·대화량 감소 신호를 만들지 않는다.
+    span: 문장 속 기간 표현 (없으면 '최근 N일간')"""
+    span, before = span or f"최근 {days}일간", f"직전 {days}일"
     sig, rec = [], []
     daily, pdaily = cur["daily"], prev["daily"]
     pv = (lambda x: x) if compare else (lambda x: None)
@@ -204,7 +214,8 @@ def sufficiency(cur: dict) -> dict:
             "min_days_required": MIN_DAYS_WITH_DATA, "health_mentions": health, "enough": not reason, "reason": reason}
 
 
-def overall(signals: list[dict], cur: dict, days: int) -> tuple[str, str, dict]:
+def overall(signals: list[dict], cur: dict, days: int, span: str | None = None) -> tuple[str, str, dict]:
+    span = span or f"최근 {days}일간"
     suff = sufficiency(cur)
     analyzed, nd, health = suff["analyzed"], suff["days_with_data"], suff["health_mentions"]
     warns = [s for s in signals if s["level"] == WARN]
@@ -216,13 +227,13 @@ def overall(signals: list[dict], cur: dict, days: int) -> tuple[str, str, dict]:
     if any(s["level"] == CHECK for s in signals):
         return "확인 권장", "몸이 불편하다고 말씀하신 기록이 있습니다. 현재 상태를 직접 확인해 보시길 권합니다.", suff
     if analyzed < MIN_ANALYZED:
-        return "판단 보류", (f"최근 {days}일간 분석된 어르신 발화가 {analyzed}건으로 적어"
+        return "판단 보류", (f"{span} 분석된 어르신 발화가 {analyzed}건으로 적어"
                           f"(최소 {MIN_ANALYZED}건) 종합 판단을 보류합니다.{tail}"), suff
     if nd < MIN_DAYS_WITH_DATA:
-        return "판단 보류", (f"최근 {days}일간 분석된 날이 {nd}일이라 주간 경향을 판단하기 어렵습니다"
+        return "판단 보류", (f"{span} 분석된 날이 {nd}일이라 주간 경향을 판단하기 어렵습니다"
                           f"(최소 {MIN_DAYS_WITH_DATA}일).{tail}"), suff
     if health == 0:
-        return "판단 보류", (f"최근 {days}일간 분석된 발화 {analyzed}건 중 수면·식사·증상·감정 관련 언급이 없어 "
+        return "판단 보류", (f"{span} 분석된 발화 {analyzed}건 중 수면·식사·증상·감정 관련 언급이 없어 "
                           "상태를 판단할 수 없습니다."), suff
     if len(warns) >= OVERALL_WARN_FOR_CHECK:
         return "확인 권장", (f"주의 신호가 {len(warns)}가지 확인되었습니다({titles(warns)}). "
@@ -238,19 +249,21 @@ def overall(signals: list[dict], cur: dict, days: int) -> tuple[str, str, dict]:
 
 
 # ---------------- 조립 ----------------
-def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None) -> dict:
-    d_from, d_to, start, end, names = rs.period(days, now)
-    _, _, pstart, pend, pnames = rs.previous_period(days, now)
-    cur = rs.aggregate(db, hid, start, end, names, analyze)
+def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None, end: str | None = None) -> dict:
+    """end: 기준일(없으면 오늘). 현재 기간·직전 기간이 함께 기준일에 맞춰 이동한다"""
+    d_from, d_to, start, stop, names = rs.period(days, now, end)
+    _, _, pstart, pend, pnames = rs.previous_period(days, now, end)
+    span = span_phrase(days, d_from, d_to, d_to == rs.today_str(now))
+    cur = rs.aggregate(db, hid, start, stop, names, analyze)
     prev = rs.aggregate(db, hid, pstart, pend, pnames, analyze)
-    cam = _camera(db.report_events_between(hid, "emotion", start, end))
+    cam = _camera(db.report_events_between(hid, "emotion", start, stop))
     cam_prev = _camera(db.report_events_between(hid, "emotion", pstart, pend))
     comp = comparison(prev, days)
 
-    signals, recs = detect(cur, prev, cam, cam_prev, days, compare=comp["available"])
-    level, summary, suff = overall(signals, cur, days)
+    signals, recs = detect(cur, prev, cam, cam_prev, days, compare=comp["available"], span=span)
+    level, summary, suff = overall(signals, cur, days, span=span)
 
-    al = db.report_alerts_between(hid, start, end)
+    al = db.report_alerts_between(hid, start, stop)
     alerts = {"count": len(al), "items": [{"ts": a["ts"], **({"type": a["cause"]} if a["cause"] else {})} for a in al],
               "note": ALERT_NOTE}
 

@@ -89,20 +89,59 @@ def parse_days(raw) -> int:
     return n
 
 
-def period(days: int, now: float) -> tuple[str, str, float, float, list[str]]:
-    """오늘 포함 최근 days 일 (서버 로컬 날짜 기준): (from, to, 시작 ts, 끝 ts, 날짜 목록)"""
-    today = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
-    first = today - timedelta(days=days - 1)
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def today_str(now: float) -> str:
+    """서버 로컬 날짜 기준 오늘 'YYYY-MM-DD'"""
+    return datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+
+
+def parse_end(raw, now: float) -> str | None:
+    """end 쿼리(기준일 = 기간의 마지막 날) → 'YYYY-MM-DD', 없으면 None(= 오늘, 기존 동작).
+    형식 오류·존재하지 않는 날짜(2026-02-30 등)·미래 날짜(서버 로컬 날짜 기준)는 ValueError. 오늘은 허용."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not DATE_RE.match(s):
+        raise ValueError("end 는 YYYY-MM-DD 형식이어야 합니다")
+    try:
+        d = datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("end 는 실제로 있는 날짜여야 합니다") from None
+    if d.date() > datetime.fromtimestamp(now).date():
+        raise ValueError("end 는 오늘(서버 기준)보다 뒤일 수 없습니다")
+    return s
+
+
+def _base_day(now: float, end: str | None) -> datetime:
+    """기간의 마지막 날 0시 (서버 로컬). end 가 없으면 오늘"""
+    if end is None:
+        return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
+    return datetime.strptime(end, "%Y-%m-%d")
+
+
+def period(days: int, now: float, end: str | None = None) -> tuple[str, str, float, float, list[str]]:
+    """기준일(없으면 오늘) 포함 최근 days 일 (서버 로컬 날짜 기준, [시작, 끝)): (from, to, 시작 ts, 끝 ts, 날짜 목록)"""
+    base = _base_day(now, end)
+    first = base - timedelta(days=days - 1)
     names = [(first + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
-    return names[0], names[-1], first.timestamp(), (today + timedelta(days=1)).timestamp(), names
+    return names[0], names[-1], first.timestamp(), (base + timedelta(days=1)).timestamp(), names
 
 
-def previous_period(days: int, now: float) -> tuple[str, str, float, float, list[str]]:
-    """period() 바로 앞의 같은 길이 기간 (직전 기간 비교용)"""
-    today = datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0, microsecond=0)
-    first = today - timedelta(days=2 * days - 1)
+def previous_period(days: int, now: float, end: str | None = None) -> tuple[str, str, float, float, list[str]]:
+    """period() 바로 앞의 같은 길이 기간 (직전 기간 비교용, 기준일에 맞춰 함께 이동)"""
+    base = _base_day(now, end)
+    first = base - timedelta(days=2 * days - 1)
     names = [(first + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
     return names[0], names[-1], first.timestamp(), (first + timedelta(days=days)).timestamp(), names
+
+
+def range_fields(now: float, d_to: str) -> dict:
+    """API 응답에 덧붙이는 기준일 정보: today(서버 로컬 오늘), end(실제 기간의 마지막 날), is_today.
+    compute() 반환 형식은 그대로 두고 엔드포인트(server/main.py)에서만 합친다 (기존 응답 필드 변경 없음, 추가만)"""
+    t = today_str(now)
+    return {"today": t, "end": d_to, "is_today": d_to == t}
 
 
 # ---------- 원하는 것 추출 ----------
@@ -183,10 +222,10 @@ def extract_wants(text: str, sig) -> dict:
 NEG_EMOTION_KINDS = ("lonely", "sad", "anxious", "lethargic", "grief")   # daily.negative_emotion_mentions 에 세는 말씀 감정
 
 
-def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None) -> dict:
-    """GET /report/stats 응답 (형식 고정 — daily 등 내부 집계는 넣지 않는다)"""
-    d_from, d_to, start, end, names = period(days, now)
-    a = aggregate(db, hid, start, end, names, analyze)
+def compute(db, hid: int, days: int, now: float, analyze: Callable | None = None, end: str | None = None) -> dict:
+    """GET /report/stats 응답 (형식 고정 — daily 등 내부 집계는 넣지 않는다). end: 기준일(없으면 오늘)"""
+    d_from, d_to, start, stop, names = period(days, now, end)
+    a = aggregate(db, hid, start, stop, names, analyze)
     sym_list = sorted(({**s, "days": len(s["days"])} for s in a["symptoms"].values()),
                       key=lambda s: (-s["count"], s["part"] or "", s["kind"]))
     return {

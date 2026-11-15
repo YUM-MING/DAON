@@ -60,10 +60,22 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-DAON = Path(r"C:\Users\hugh\Desktop\DAON")
-if not DAON.exists():
-    DAON = Path(__file__).resolve().parent.parent.parent / "DAON"
-RESPONSES = DAON / "modules" / "dialogue" / "src" / "responses.py"
+MARK = Path("modules") / "dialogue" / "src" / "responses.py"
+
+
+def find_daon() -> Path:
+    """이 파일이 저장소 안에 있든(modules/audio_ai/tools/) 밖에 있든 DAON 을 찾는다."""
+    here = Path(__file__).resolve()
+    for p in [here.parent, *here.parents]:
+        if (p / MARK).exists():
+            return p
+        if (p / "DAON" / MARK).exists():               # 저장소와 나란히 둔 경우
+            return p / "DAON"
+    return Path(r"C:\Users\hugh\Desktop\DAON")
+
+
+DAON = find_daon()
+RESPONSES = DAON / MARK
 WEB_TTS = DAON / "web" / "tts"
 
 API = "https://api.openai.com/v1/audio/speech"
@@ -80,9 +92,12 @@ TONE_CALM = ("침착하게",
 # 긴급·안심 계열만 침착하게. 나머지는 따뜻하게
 URGENT_NAMES = {"ESCALATE", "REASSURE", "REASSURE_CRISIS", "REASSURE_HAZARD", "HAZARD_HOLD"}
 
-# 로봇이 통째로 말하지 않는 것들 (다른 문장 안에 끼워 넣는 조각·이름표)
+# 로봇이 통째로 말하지 않는 것들 — 다른 문장의 {슬롯} 에 끼워 넣는 조각·이름표.
+# 확인하는 법: dialogue_algorithm.py 에서 그 상수가 "slots" 안에서만 쓰이면 조각이다.
 SKIP_NAMES = {"DANGER_SAID", "TOPIC_NAME", "REPEAT_PREFIX", "CHECKIN_KINDS",
-              "SYMPTOM_SAID", "RESCUE_LIKE_ASK"}
+              "SYMPTOM_SAID", "RESCUE_LIKE_ASK",
+              "REDIRECT_ACK",        # {ack} 로만 쓰인다
+              "REDIRECT_TOPIC"}      # {anchor} 로만 쓰인다
 
 HANGUL = re.compile(r"[가-힣]")
 
@@ -187,76 +202,106 @@ def main() -> None:
     print(f"저장     {WEB_TTS / args.voice}")
     print()
 
-    if args.dry:
-        print("■ 침착하게 (긴급·안심)")
-        for t, src, tone in items:
-            if tone == TONE_CALM[0]:
-                print(f"   [{src}] {t[:60]}")
-        print("\n■ 따뜻하게 — 앞 15개만")
-        n = 0
-        for t, src, tone in items:
-            if tone == TONE_WARM[0]:
-                print(f"   [{src}] {t[:60]}")
-                n += 1
-                if n >= 15:
-                    break
-        print(f"\n(--확인 이라 만들지 않았습니다. 빼면 실제로 만듭니다)")
-        return
-
-    key = load_key()
     outdir = WEB_TTS / args.voice
     outdir.mkdir(parents=True, exist_ok=True)
     mpath = outdir / "manifest.json"
 
-    manifest = {"voice": args.voice, "model": MODEL, "map": {}}
+    # 이미 만들어 둔 것을 읽는다.
+    # 파일 이름은 문구에 한 번 붙으면 그대로 간다. 순번으로 매기면 문구가 하나
+    # 늘어날 때마다 뒤쪽 번호가 전부 밀려서 멀쩡한 음성을 다시 만들게 된다.
+    old_map: dict[str, str] = {}
     if mpath.exists():
         try:
             old = json.loads(mpath.read_text(encoding="utf-8"))
             if old.get("voice") == args.voice:
-                manifest["map"] = dict(old.get("map", {}))
+                old_map = dict(old.get("map", {}))
         except Exception:                                        # noqa: BLE001
             pass
 
+    need = {t for t, _, _ in items}
+    keep = {t: f for t, f in old_map.items()
+            if t in need and (outdir / f).exists() and (outdir / f).stat().st_size > 1000}
+    버린문구 = [t for t in old_map if t not in need]              # 문구가 바뀌거나 빠진 것
+    todo = [(t, src, tone) for t, src, tone in items if t not in keep]
+
+    # 쓰이는 파일 이름을 피해서 다음 번호를 준다
+    used = {int(m.group(1)) for f in keep.values()
+            if (m := re.fullmatch(r"(\d+)\.mp3", f))}
+    nxt = max(used, default=0)
+
+    print(f"이미 있는 것 {len(keep)}개 · 새로 만들 것 {len(todo)}개"
+          + (f" · 안 쓰이게 된 것 {len(버린문구)}개" if 버린문구 else ""))
+
+    if args.dry:
+        if 버린문구:
+            print("\n■ 안 쓰이게 된 음성 (돌리면 지웁니다)")
+            for t in 버린문구:
+                print(f"   {old_map[t]}  {t[:58]}")
+        print(f"\n■ 새로 만들 문구 {len(todo)}개 · {sum(len(t) for t, _, _ in todo):,}자")
+        for t, src, tone in todo:
+            print(f"   [{tone}] [{src}] {t[:58]}")
+        print("\n(--확인 이라 만들지 않았습니다. 빼면 실제로 만듭니다)")
+        return
+
+    if 버린문구:
+        for t in 버린문구:
+            f = outdir / old_map[t]
+            if f.exists():
+                try:
+                    f.unlink()
+                    print(f"   지움 {f.name}  {t[:46]}")
+                except OSError as e:
+                    print(f"   못 지움 {f.name} ({e}) — 대응표에서만 뺍니다")
+    if not todo:
+        manifest = {"voice": args.voice, "model": MODEL,
+                    "generated": datetime.now().isoformat(timespec="seconds"), "map": keep}
+        mpath.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+        print("\n새로 만들 것이 없습니다. 대응표만 정리했습니다.")
+        return
+    print(f"새로 만들 글자 수 {sum(len(t) for t, _, _ in todo):,}자\n")
+
+    key = load_key()
+    manifest = {"voice": args.voice, "model": MODEL, "map": dict(keep)}
     tones = {TONE_WARM[0]: TONE_WARM[1], TONE_CALM[0]: TONE_CALM[1]}
-    made = skipped = failed = 0
+    made = failed = 0
     t0 = time.time()
 
-    for i, (text, src, tone) in enumerate(items, 1):
-        name = f"{i:04d}.mp3"
+    def save():
+        manifest["generated"] = datetime.now().isoformat(timespec="seconds")
+        mpath.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    for i, (text, src, tone) in enumerate(todo, 1):
+        nxt += 1
+        name = f"{nxt:04d}.mp3"
         path = outdir / name
-        if manifest["map"].get(text) == name and path.exists() and path.stat().st_size > 1000:
-            skipped += 1
-            continue
         try:
             path.write_bytes(speak(key, text, args.voice, tones[tone]))
             manifest["map"][text] = name
             made += 1
-            el = time.time() - t0
-            left = el / max(made, 1) * (len(items) - i)
-            print(f"  [{i}/{len(items)}] {tone} {path.stat().st_size/1024:5.0f}KB  "
-                  f"남은 시간 약 {left/60:.0f}분   {text[:34]}")
+            left = (time.time() - t0) / made * (len(todo) - i)
+            print(f"  [{i}/{len(todo)}] {name} {tone} {path.stat().st_size/1024:5.0f}KB  "
+                  f"남은 시간 약 {left/60:.0f}분   {text[:32]}")
         except urllib.error.HTTPError as e:
-            print(f"  [{i}/{len(items)}] ★ 실패 — {explain(e)}")
+            print(f"  [{i}/{len(todo)}] ★ 실패 — {explain(e)}")
             failed += 1
+            nxt -= 1                                   # 실패한 번호는 다시 쓴다
             if e.code in (401, 403, 404):
                 print("\n   더 돌려도 같은 오류입니다. 멈춥니다.")
                 break
             time.sleep(3)
         except Exception as e:                                   # noqa: BLE001
-            print(f"  [{i}/{len(items)}] ★ 실패 — {type(e).__name__}: {str(e)[:100]}")
+            print(f"  [{i}/{len(todo)}] ★ 실패 — {type(e).__name__}: {str(e)[:100]}")
             failed += 1
-        # manifest 를 자주 저장해 둔다 (중간에 끊겨도 이어서 할 수 있게)
-        if made % 10 == 0:
-            manifest["generated"] = datetime.now().isoformat(timespec="seconds")
-            mpath.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+            nxt -= 1
+        if made % 10 == 0:                   # 중간에 끊겨도 이어서 할 수 있게 자주 저장
+            save()
         time.sleep(0.2)
 
-    manifest["generated"] = datetime.now().isoformat(timespec="seconds")
-    mpath.write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
-
+    save()
     total = sum(f.stat().st_size for f in outdir.glob("*.mp3"))
     print()
-    print(f"만든 것 {made}개 · 건너뜀 {skipped}개" + (f" · 실패 {failed}개" if failed else ""))
+    print(f"새로 만든 것 {made}개 · 그대로 쓴 것 {len(keep)}개"
+          + (f" · 실패 {failed}개" if failed else ""))
     print(f"대응표  {mpath.name} · {len(manifest['map'])}개 문구")
     print(f"폴더 크기 {total/1024/1024:.1f}MB")
     if failed:

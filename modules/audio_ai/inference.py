@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import re
 import sys
 import threading
 import time
@@ -188,7 +189,36 @@ class SpeechToText:
     #   낱말을 여러 개 넣으면 안 된다. "다온아 다온이 다온" 으로 주면 이름은
     #   6/6 이 되지만 모델이 그 낱말만 반복하는 환각에 빠진다(CER 134.5%).
     #   근거: DAON_patch/이름인식_결과_stt_quiet_base.txt
-    HOTWORDS = "다온"
+    #   2026-11-15 재측정. 시연 대본 발화 12개(발표자 녹음, rec/대본발화/)로
+    #   핫워드를 "다온" → "다온아" 로 바꾸고 낱말 프롬프트를 더했다.
+    #
+    #                        깨어남   CER    그대로 맞음   발화당
+    #     "다온" (이전)         X    14.9%    6/12      0.91초
+    #     "다온아"+프롬프트       O     5.9%   10/12      0.80초   ← 지금 이것
+    #     small+프롬프트        O     3.0%    9/12      2.91초   (3.6배 느려 안 쓴다)
+    #
+    #   '깨어남' 은 혜원님 text_analyzer 의 CALL_WORDS 판정이다. 이전 설정은
+    #   "다온아" 를 "다온어" 로 받아썼고 그 낱말이 호출어 집합에 없어서
+    #   **불러도 로봇이 깨어나지 않았다.** CER 보다 이게 먼저다.
+    #   근거: DAON_patch/대본STT2_결과.txt
+    HOTWORDS = "다온아"
+
+    # 나올 낱말을 앞 문맥으로 알려 준다. 점심은→잠시만, 화장실→하자실,
+    # 손녀한테→소년한테 가 이것으로 고쳐졌다.
+    #
+    #   대본 문장을 그대로 넣으면 안 된다. 모델이 그걸 베껴 쓴다. 낱말만 담되,
+    #   낱말 목록만 주는 것(CER 11.9%)보다 한 문장에 담는 쪽(5.9%)이 나았다.
+    INITIAL_PROMPT = ("어르신과 돌봄 로봇 다온이 나누는 대화입니다. "
+                      "쓸쓸하다, 그럭저럭, 손녀, 김치찌개, 된장찌개, 약, 창문, "
+                      "화장실, 점심, 주말 같은 말이 나옵니다.")
+
+    # 짧은 발화에서 모델이 위 프롬프트를 그대로 읽어 버리는 일이 있다.
+    #   "다온아" (0.9초)  →  "다온 어르신과 돌봄 다온이 나누는"
+    # 글자 토막으로 잡으려 했더니 모델이 '로봇' 을 빼먹어서 못 잡았다. 그래서
+    # 프롬프트 낱말이 **적어 둔 순서대로 3개 이상 이어 나오는지**로 본다.
+    # 낱말 한둘이 겹치는 것은 당연하다 — 프롬프트는 나올 낱말을 적어 둔 것이다.
+    # 걸리면 그 발화를 못 들은 것으로 치는 쪽이, 헛소리를 대화에 넘기는 쪽보다 낫다.
+    PROMPT_ECHO_RUN = 3
 
     def __init__(self, model_size: str = STT_MODEL, enabled: bool = True):
         self.model = None
@@ -205,12 +235,33 @@ class SpeechToText:
         except Exception as e:                                   # noqa: BLE001
             print(f"[STT] 비활성 ({e})", file=sys.stderr)
 
+    @classmethod
+    def _prompt_echo(cls, text: str) -> bool:
+        """받아쓴 글이 initial_prompt 를 베낀 것인지 본다 (PROMPT_ECHO_RUN 참고)."""
+        if not text or not cls.INITIAL_PROMPT:
+            return False
+        plain = re.sub(r"[^\w가-힣]", "", text)
+        run = gap = longest = 0
+        for w in re.split(r"[,.\s]+", cls.INITIAL_PROMPT):
+            w = re.sub(r"[^\w가-힣]", "", w)
+            if w and w in plain:
+                run += 1
+                gap = 0
+                longest = max(longest, run)
+            elif run and gap == 0:
+                gap = 1                      # 한 낱말 빠뜨린 것은 눈감아 준다
+            else:
+                run = gap = 0
+        return longest >= cls.PROMPT_ECHO_RUN
+
     def transcribe(self, wav: np.ndarray) -> str:
         if self.model is None:
             return ""
         kw = dict(language="ko", beam_size=1, vad_filter=True,
                   # 어르신 발화는 느리고 쉼이 길어 기본값보다 여유를 둔다
                   no_speech_threshold=0.5)
+        if self.INITIAL_PROMPT:
+            kw["initial_prompt"] = self.INITIAL_PROMPT
         if self.HOTWORDS and self._hotwords_ok:
             kw["hotwords"] = self.HOTWORDS
         try:
@@ -220,7 +271,11 @@ class SpeechToText:
             self._hotwords_ok = False
             kw.pop("hotwords", None)
             segments, _ = self.model.transcribe(wav, **kw)
-        return " ".join(s.text.strip() for s in segments).strip()
+        text = " ".join(s.text.strip() for s in segments).strip()
+        if self._prompt_echo(text):
+            print(f"[STT] 프롬프트를 베껴 써서 버림: {text[:48]}", file=sys.stderr)
+            return ""
+        return text
 
 
 class AudioRouter:

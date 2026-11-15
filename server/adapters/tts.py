@@ -42,7 +42,7 @@ import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, StreamingResponse
 
 from server import config as cfgmod
 
@@ -62,8 +62,12 @@ TONES = {
              "서두르지 말고, 낮고 안정된 목소리로."),
 }
 
-_lock = threading.Lock()             # 같은 문장이 동시에 두 번 들어올 때 중복 호출 방지
-_making: set[str] = set()
+# 같은 문장을 동시에 달라고 할 때 OpenAI 를 두 번 부르지 않게 한다.
+# 처음에는 뒤에 온 요청에 503 을 줬는데, 그러면 **폰이 내장 음성으로 떨어진다.**
+# 한 대화 안에서 목소리가 바뀌는 바로 그 문제다. 그래서 거절하지 않고 기다린다.
+_lock = threading.Lock()
+_making: dict[str, threading.Event] = {}
+WAIT_SEC = 25.0
 
 
 def _key() -> str | None:
@@ -82,20 +86,36 @@ def _key() -> str | None:
     return None
 
 
-def _make(text: str, voice: str, tone: str) -> bytes:
+def _make(text: str, voice: str, tone: str, out: Path):
+    """OpenAI 에서 받아 파일로 쓰면서, 받은 토막을 그대로 흘려보낸다.
+
+    다 만든 뒤에 보내면 폰은 그만큼 기다려야 한다. 흘려보내면 <audio> 가
+    먼저 받은 만큼부터 재생을 시작하므로 자막과 음성 사이의 틈이 줄어든다.
+    받는 동안 .part 에 쓰고 끝에 제 이름으로 바꾼다. 중간에 끊기면 .part 가
+    남을 뿐이고, 다음에 그 문장이 나오면 다시 만든다.
+    """
     import requests
-    r = requests.post(
+    tmp = out.with_suffix(out.suffix + ".part")
+    got = 0
+    with requests.post(
         API,
         headers={"Authorization": f"Bearer {_key()}", "Content-Type": "application/json"},
         json={"model": MODEL, "voice": voice, "input": text,
               "response_format": "mp3", "instructions": TONES[tone]},
-        timeout=20,
-    )
-    if r.status_code != 200:
-        raise RuntimeError(f"HTTP {r.status_code} {r.text[:160]}")
-    if len(r.content) < 500:
-        raise RuntimeError(f"받은 파일이 너무 작다 ({len(r.content)}바이트)")
-    return r.content
+        timeout=20, stream=True,
+    ) as r:
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} {r.text[:160]}")
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_content(8192):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                got += len(chunk)
+                yield chunk
+    if got < 500:
+        raise RuntimeError(f"받은 파일이 너무 작다 ({got}바이트)")
+    tmp.replace(out)
 
 
 def register(app, db) -> None:
@@ -124,34 +144,46 @@ def register(app, db) -> None:
 
         name = hashlib.sha1(f"{voice}|{tone}|{text}".encode("utf-8")).hexdigest()[:16] + ".mp3"
         path = cache / name
-        hit = path.exists() and path.stat().st_size > 500
-        if not hit:
-            if not _key():
-                # 키가 없으면 만들 수 없다. 503 으로 알려서 폰이 내장 음성으로 가게 한다.
-                raise HTTPException(503, "OPENAI_API_KEY 가 없어 음성을 만들 수 없습니다")
-            with _lock:
-                busy = name in _making
-                if not busy:
-                    _making.add(name)
-            if busy:                                 # 다른 요청이 지금 만들고 있다
-                raise HTTPException(503, "같은 문장을 만들고 있습니다")
+
+        def 저장된것(how: str):
+            return FileResponse(path, media_type="audio/mpeg",
+                                headers={"Cache-Control": "public, max-age=31536000",
+                                         "X-Daon-Tts": how})
+
+        if path.exists() and path.stat().st_size > 500:
+            return 저장된것("cache")
+        if not _key():
+            # 키가 없으면 만들 수 없다. 503 으로 알려서 폰이 내장 음성으로 가게 한다.
+            raise HTTPException(503, "OPENAI_API_KEY 가 없어 음성을 만들 수 없습니다")
+
+        with _lock:
+            기다릴것 = _making.get(name)
+            if 기다릴것 is None:
+                _making[name] = threading.Event()
+        if 기다릴것 is not None:
+            # 다른 요청이 지금 만들고 있다. 거절하면 폰이 내장 음성으로 떨어지므로 기다린다.
+            if not 기다릴것.wait(WAIT_SEC) or not path.exists():
+                raise HTTPException(503, "음성을 만들지 못했습니다")
+            return 저장된것("waited")
+
+        끝 = _making[name]
+
+        def 흘려보내기():
             try:
-                data = _make(text, voice, tone)
-                tmp = cache / (name + ".part")
-                tmp.write_bytes(data)
-                tmp.replace(path)                    # 반쯤 쓰인 파일이 남지 않게
-                log.info("TTS 생성 %s %s %s %.0fKB  %s",
-                         voice, tone, name, len(data) / 1024, text[:40])
+                yield from _make(text, voice, tone, path)
+                log.info("TTS 생성 %s %s %s  %s", voice, tone, name, text[:40])
             except Exception as e:                   # noqa: BLE001
                 log.warning("TTS 생성 실패 (%s) — 폰 내장 음성으로 넘어갑니다: %s", text[:30], e)
-                raise HTTPException(503, "음성을 만들지 못했습니다") from e
+                # 이미 200 을 보냈으므로 상태코드로는 알릴 수 없다. 폰은 재생 실패로
+                # 받아서 내장 음성으로 넘어간다 (ws-client.js 의 playRecorded onerror).
             finally:
                 with _lock:
-                    _making.discard(name)
+                    _making.pop(name, None)
+                끝.set()
 
-        return FileResponse(path, media_type="audio/mpeg",
-                            headers={"Cache-Control": "public, max-age=31536000",
-                                     "X-Daon-Tts": "cache" if hit else "new"})
+        return StreamingResponse(흘려보내기(), media_type="audio/mpeg",
+                                 headers={"Cache-Control": "public, max-age=31536000",
+                                          "X-Daon-Tts": "new"})
 
     @app.get("/api/tts/stats")
     def tts_stats(voice: str = Query("cedar")):
@@ -164,4 +196,3 @@ def register(app, db) -> None:
                 "미리_만든_것": {"개수": len(pre), "MB": mb(pre)},
                 "그때_만든_것": {"개수": len(made), "MB": mb(made)}}
 
-    _ = Response            # (import 유지용)

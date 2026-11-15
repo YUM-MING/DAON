@@ -30,3 +30,6 @@ config.local.yaml
 # 에디터
 .vscode/
 .idea/
+
+# 서버가 그때그때 만든 TTS 음성 (재현 가능, 올리지 않음)
+web/tts/*/cache/

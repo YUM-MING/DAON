@@ -423,6 +423,10 @@ def create_app(config: dict) -> FastAPI:
     async def http_exc(_, exc: HTTPException):
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
+    # TTS (음성 AI): 미리 만든 음성에 없는 문장을 같은 목소리로 만들어 준다
+    from server.adapters.tts import register as register_tts
+    register_tts(app, db)
+
     # 정적 웹앱 (마지막에 마운트해야 /api, /ws 가 우선)
     app.mount("/", StaticFiles(directory=str(cfgmod.WEB), html=True), name="web")
     return app

@@ -136,8 +136,8 @@
     document.addEventListener("keydown", ttsUnlock, true);
   }
 
-  // 미리 만든 파일을 재생한다. 끝까지 재생되면 ok(), 재생 자체가 안 되면 fail().
-  function playRecorded(file, text, ok, fail){
+  // 주소에서 음성을 받아 재생한다. 끝까지 재생되면 ok(), 재생 자체가 안 되면 fail().
+  function playRecorded(url, text, ok, fail){
     if(!audioEl){ try{ audioEl = new Audio(); audioEl.preload = "auto"; }catch(e){ fail(); return; } }
     const el = audioEl;
     let settled = false, guard = null;
@@ -158,7 +158,7 @@
     guard = setTimeout(() => over(true), Math.max(6000, text.length * 400));
     try{
       if("speechSynthesis" in window) speechSynthesis.cancel();
-      el.src = ttsDir + file;
+      el.src = url;
       el.currentTime = 0;
       const p = el.play();
       if(p && p.catch) p.catch(() => over(false));      // 아직 터치 전이면 합성으로 넘어간다
@@ -183,21 +183,37 @@
     }catch(e){ done(false); }
   }
 
+  // 서버에 같은 목소리로 만들어 달라고 한다 (/api/tts).
+  // 미리 만든 음성에 없는 문장 — LLM 이 쓴 문장, 빈칸이 채워진 템플릿 — 이 여기로 온다.
+  // 처음 나오는 문장만 0.5~1초 걸리고, 서버가 저장해 두므로 그다음부터는 즉시다.
+  function askServer(text, tone, done, after){
+    let token = "";
+    try{ token = localStorage.getItem("daon_robot_token") || ""; }catch(e){}
+    if(!TTS_VOICE || TTS_VOICE === "off" || !token){ speakSynth(text, done); return; }
+    const url = "api/tts?token=" + encodeURIComponent(token)
+              + "&voice=" + encodeURIComponent(TTS_VOICE)
+              + "&tone=" + tone + "&text=" + encodeURIComponent(text);
+    if(typeof log === "function")
+      log(after ? `${after} 재생 실패 → 서버에 요청` : `서버에 음성 요청 (${tone})`);
+    playRecorded(url, text,
+      () => done(true),
+      () => {
+        if(typeof log === "function") log("서버 음성도 안 됨 — 폰 내장 음성으로");
+        speakSynth(text, done);
+      });
+  }
+
   function speak(text, utteranceId){
     const done = (ok) => { if(utteranceId !== -1) send({type:"tts_done", utterance_id: utteranceId, ok}); if(typeof log === "function" && utteranceId === -1) log("TTS 테스트 " + (ok ? "재생 완료" : "실패")); document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:false}})); };
     document.dispatchEvent(new CustomEvent("daon:tts", {detail:{speaking:true}}));
+    const tone = (curState === "alert") ? "calm" : "warm";   // 긴급은 침착하게
     const file = ttsMap ? ttsMap.get(ttsKey(text)) : null;
     if(file){
       if(typeof log === "function") log(`음성 ${file} 재생`);
-      playRecorded(file, text,
-        () => done(true),
-        () => {
-          if(typeof log === "function") log(`음성 ${file} 재생 실패 — 브라우저 합성으로`);
-          speakSynth(text, done);
-        });
+      playRecorded(ttsDir + file, text, () => done(true), () => askServer(text, tone, done, file));
       return;
     }
-    speakSynth(text, done);
+    askServer(text, tone, done, null);
   }
 
   function onRobot(m){

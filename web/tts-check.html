@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>음성 점검</title>
+<style>
+  :root{ --bg:#fff; --fg:#161616; --muted:#6b6b6b; --line:#e3e3e3;
+         --ok:#1b7f4b; --bad:#b4231f; --accent:#1f4e79; --card:#fafafa; }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#15171b; --fg:#ededed; --muted:#9a9a9a; --line:#2d3137;
+           --ok:#5fd194; --bad:#ff8d86; --accent:#7eb3e8; --card:#1c1f25; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 16px 48px;background:var(--bg);color:var(--fg);line-height:1.55;
+       font-family:"맑은 고딕","Malgun Gothic",system-ui,-apple-system,sans-serif}
+  .wrap{max-width:560px;margin:0 auto}
+  h1{font-size:1.35rem;margin:22px 0 2px;color:var(--accent)}
+  .sub{color:var(--muted);font-size:.88rem;margin:0 0 20px}
+  .row{padding:12px 0;border-bottom:1px solid var(--line)}
+  .lbl{font-size:.82rem;color:var(--muted);margin-bottom:3px}
+  .val{font-size:1.02rem;font-weight:700;word-break:break-all}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+  button{width:100%;padding:16px;margin-top:18px;font-size:1.05rem;font-weight:700;
+         border:0;border-radius:10px;background:var(--accent);color:#fff}
+  button:disabled{opacity:.5}
+  pre{background:var(--card);border:1px solid var(--line);border-radius:8px;
+      padding:10px;font-size:.78rem;white-space:pre-wrap;word-break:break-all;margin:14px 0 0}
+  .hint{color:var(--muted);font-size:.84rem;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>음성 점검</h1>
+<p class="sub">미리 만든 목소리가 이 폰에서 재생되는지 확인합니다. 짝 맺기는 필요 없습니다.</p>
+
+<div class="row"><div class="lbl">1. 대응표 (manifest.json)</div><div class="val" id="m">확인 중…</div></div>
+<div class="row"><div class="lbl">2. mp3 파일</div><div class="val" id="f">—</div></div>
+<div class="row"><div class="lbl">3. 재생 (버튼을 눌러주세요)</div><div class="val" id="p">—</div></div>
+<div class="row"><div class="lbl">4. 폰 내장 한국어 음성 (비교용)</div><div class="val" id="s">확인 중…</div></div>
+
+<button id="btn" disabled>소리 들어보기</button>
+<pre id="log"></pre>
+
+<p class="hint">
+  1·2 가 빨간색이면 서버가 파일을 못 주고 있는 것이고,<br>
+  3 만 빨간색이면 폰이 소리를 막은 것입니다.
+</p>
+</div>
+
+<script>
+const VOICE = new URLSearchParams(location.search).get("voice") || "cedar";
+const DIR = "tts/" + encodeURIComponent(VOICE) + "/";
+const $ = (id) => document.getElementById(id);
+const lines = [];
+const note = (s) => { lines.push(s); $("log").textContent = lines.join("\n"); };
+const set = (id, text, good) => {
+  const el = $(id); el.textContent = text; el.className = "val " + (good ? "ok" : "bad");
+};
+
+note("주소 " + location.origin);
+note("폴더 " + DIR);
+note("브라우저 " + navigator.userAgent);
+
+let first = null;
+
+(async () => {
+  // 1) 대응표
+  let man = null;
+  try{
+    const r = await fetch(DIR + "manifest.json", {cache:"no-store"});
+    note("manifest.json → HTTP " + r.status + " / " + (r.headers.get("content-type") || "?"));
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    man = await r.json();
+    const n = Object.keys(man.map || {}).length;
+    if(!n) throw new Error("대응표가 비어 있습니다");
+    set("m", "정상 — 문구 " + n + "개 (" + (man.voice || "?") + ")", true);
+    note("만든 날짜 " + (man.generated || "?"));
+  }catch(e){
+    set("m", "실패 — " + e.message, false);
+    note("※ 서버가 " + DIR + "manifest.json 을 주지 못합니다.");
+  }
+
+  // 2) mp3 파일
+  if(man){
+    const [text, file] = Object.entries(man.map)[0];
+    first = DIR + file;
+    try{
+      const r = await fetch(first, {cache:"no-store"});
+      note(file + " → HTTP " + r.status + " / " + (r.headers.get("content-type") || "?"));
+      if(!r.ok) throw new Error("HTTP " + r.status);
+      const b = await r.blob();
+      if(b.size < 1000) throw new Error("파일이 너무 작습니다 (" + b.size + "바이트)");
+      set("f", "정상 — " + file + " · " + Math.round(b.size/1024) + "KB", true);
+      note("들려줄 문구: " + text);
+      $("btn").disabled = false;
+    }catch(e){
+      set("f", "실패 — " + e.message, false);
+    }
+  }
+
+  // 4) 폰 내장 음성 (비교용)
+  const show = () => {
+    if(!("speechSynthesis" in window)){ set("s", "이 브라우저는 내장 음성이 없습니다", false); return; }
+    const ko = speechSynthesis.getVoices().filter(v => (v.lang||"").toLowerCase().startsWith("ko"));
+    set("s", ko.length ? ko.length + "개 — " + ko.map(v=>v.name).slice(0,2).join(", ") : "한국어 음성 없음",
+        ko.length > 0);
+  };
+  show();
+  if("speechSynthesis" in window) speechSynthesis.onvoiceschanged = show;
+})();
+
+$("btn").addEventListener("click", async () => {
+  if(!first) return;
+  set("p", "재생 중…", true);
+  const a = new Audio(first);
+  let done = false;
+  const over = (ok, why) => {
+    if(done) return; done = true;
+    set("p", ok ? "정상 — 소리가 들렸다면 성공입니다" : "실패 — " + why, ok);
+    note("재생 결과: " + (ok ? "끝까지 재생됨" : why));
+  };
+  a.onended = () => over(true);
+  a.onerror = () => over(false, "파일을 읽지 못했습니다");
+  a.onloadedmetadata = () => note("길이 " + a.duration.toFixed(1) + "초");
+  setTimeout(() => over(false, "끝났다는 신호가 오지 않았습니다"), 20000);
+  try{
+    await a.play();
+    note("play() 통과 — 소리가 나와야 합니다");
+  }catch(e){
+    over(false, e.name + ": 폰이 소리를 막았습니다");
+  }
+});
+</script>
+</body>
+</html>

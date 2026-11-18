@@ -94,6 +94,26 @@ SPEECH_THRESHOLD = 0.50
 #
 # 더 줄이려면 hop 도 0.25 로 낮춰야 0.25초를 더 버는데, hop 은 낙상 판정의
 # 연속 창 조건(FALL_K)까지 바꾼다. 낙상 평가를 다시 돌리기 전에는 건드리지 않는다.
+# 받아쓰기 대기열이 밀렸을 때 얼마나 참을 것인가.
+#
+#   2026-11-17 학교 시연 준비에서 "말하고 10분 뒤에 인식과 답장이 떴다" 는
+#   보고가 있었다. 응답 한 번은 2.7~5.2초다. 10분은 그 100~200배라 어느
+#   구간이 느려져서 나올 수 있는 값이 아니다. 밀린 것(backlog)이다.
+#
+#   원인은 이 파일의 STT 대기열이 상한도 버리는 규칙도 없었다는 것이다.
+#   발화 하나를 받아쓰는 데 1.3초 걸리는데, 발화가 그보다 빠르게 들어오면
+#   대기열이 무한정 쌓이고 지연이 선형으로 늘어난다. 조용해져도 안 풀린다.
+#   쌓인 것을 다 처리해야 하기 때문이다.
+#
+#   집에 어르신 혼자 있으면 발화가 띄엄띄엄 들어와 생기지 않는다. 그러나
+#   여러 사람이 계속 말하는 곳이나, 네트워크가 막혔다가 풀리면서 폰이
+#   모아 둔 음성을 한꺼번에 보낼 때 생긴다(폰은 최대 23초치를 모은다).
+#
+#   실시간 대화에서 10분 전 발화에 답하는 것은 의미가 없을 뿐 아니라
+#   해롭다. 엉뚱한 때에 엉뚱한 대답이 나간다. 그래서 두 겹으로 막는다.
+STT_QUEUE_MAX = 3            # 대기열 상한. 넘으면 **오래된 것부터** 버린다
+STT_MAX_LAG_SEC = 8.0        # 받아쓰기를 시작할 때 이보다 오래된 발화는 버린다
+
 SILENCE_SEC = 0.7
 MAX_UTTERANCE_SEC = 15.0
 #   발화 버퍼는 창이 speech 로 분류된 뒤에야 담기 시작한다. 창이 1초, hop 이
@@ -370,7 +390,8 @@ class AudioRouter:
         close() 로 내린 뒤 다시 쓰려면 이 메서드를 호출한다."""
         if not self.stt_async or self._stt_thread is not None:
             return
-        self._stt_q = queue.Queue()
+        self._stt_q = queue.Queue(maxsize=STT_QUEUE_MAX)
+        self.stt_dropped = 0                 # 밀려서 버린 발화 수 (상태에 실어 보낸다)
         self._stt_thread = threading.Thread(target=self._stt_loop,
                                             name="stt-worker", daemon=True)
         self._stt_thread.start()
@@ -381,6 +402,14 @@ class AudioRouter:
             if item is None:
                 return
             wav, t = item
+            lag = self._now - t
+            if lag > STT_MAX_LAG_SEC:
+                # 이미 지난 말이다. 지금 답하면 엉뚱한 때에 엉뚱한 대답이 나간다.
+                self.stt_dropped += 1
+                print(f"[STT] {lag:.1f}초 밀린 발화를 버립니다 "
+                      f"(누적 {self.stt_dropped}건). 소리가 끊이지 않거나 "
+                      f"네트워크가 밀리고 있습니다.", file=sys.stderr)
+                continue
             try:
                 self._transcribe_and_emit(wav, t)
             except Exception as e:                      # noqa: BLE001
@@ -443,7 +472,20 @@ class AudioRouter:
         # 길이·음량 판정은 걷어내기 **전**의 버퍼로 한다 (기존 동작을 바꾸지 않기 위해).
         wav = _trim_front(wav)
         if self._stt_q is not None:
-            self._stt_q.put((wav, self._now))   # 별도 스레드로 넘기고 바로 복귀
+            # 가득 차 있으면 **오래된 것부터** 버린다. 방금 한 말이 가장 중요하다.
+            while True:
+                try:
+                    self._stt_q.put_nowait((wav, self._now))
+                    break
+                except queue.Full:
+                    try:
+                        self._stt_q.get_nowait()
+                        self.stt_dropped += 1
+                    except queue.Empty:
+                        break
+            if self.stt_dropped and self.stt_dropped % 5 == 0:
+                print(f"[STT] 대기열이 밀려 오래된 발화를 버리는 중 "
+                      f"(누적 {self.stt_dropped}건)", file=sys.stderr)
         else:
             self._transcribe_and_emit(wav, self._now)
 
